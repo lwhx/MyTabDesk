@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MyTabDesk</title>
+  <link rel="stylesheet" href="newtab.css" />
+</head>
+<body>
+  <input id="importFileInput" class="visually-hidden" type="file" accept="application/json,.json" />
+  <input id="encryptedBackupFileInput" class="visually-hidden" type="file" accept="application/json,.json" />
+
+  <div id="appShell" class="app-shell">
+    <aside class="sidebar" aria-label="空间列表">
+      <header class="sidebar-header">
+        <div class="brand-block">
+          <div class="brand-mark" aria-hidden="true">M</div>
+          <div>
+            <div class="brand-name">MyTabDesk</div>
+            <div class="brand-subtitle">标签页工作台</div>
+          </div>
+        </div>
+        <button id="createSpaceBtn" class="icon-button" type="button" aria-label="新建空间">+</button>
+      </header>
+
+      <section class="sidebar-section">
+        <div class="section-title-row">
+          <div class="section-title">空间</div>
+          <button id="toggleSidebarBtn" class="mini-button" type="button">收起</button>
+        </div>
+        <nav id="spaceList" class="space-list" aria-label="空间导航"></nav>
+      </section>
+
+      <footer class="sidebar-footer">
+        <button id="exportBtn" class="sidebar-footer-button" type="button">导出数据</button>
+        <button id="importBtn" class="sidebar-footer-button" type="button">导入数据</button>
+        <button id="settingsBtn" class="sidebar-footer-button" type="button">设置</button>
+        <button id="clearDataBtn" class="sidebar-footer-button danger-text-button" type="button">清空数据</button>
+      </footer>
+    </aside>
+
+    <main class="main-panel">
+      <header class="main-toolbar" id="workspaceToolbar">
+        <div class="space-heading">
+          <h1 id="currentSpaceName">默认空间</h1>
+          <p id="currentSpaceMeta">0 个分组 · 0 个链接</p>
+        </div>
+
+        <div class="main-actions">
+          <label class="search-box" for="searchInput">
+            <span aria-hidden="true">⌕</span>
+            <input id="searchInput" class="search-input" type="search" placeholder="搜索分组、标题或网址" autocomplete="off" />
+          </label>
+          <button id="toggleThemeBtn" class="secondary-button" type="button">深色模式</button>
+          <button id="toggleTabsPanelBtn" class="secondary-button" type="button">收起右栏</button>
+          <button id="batchDeleteBtn" class="secondary-button danger-text-button" type="button">批量删除</button>
+          <button id="createGroupBtn" class="primary-button" type="button">添加分组</button>
+        </div>
+      </header>
+
+      <section id="batchBar" class="batch-bar" hidden>
+        <div>已进入批量删除模式，勾选需要删除的链接。</div>
+        <div class="batch-actions">
+          <button id="confirmBatchDeleteBtn" class="danger-button" type="button">删除选中</button>
+          <button id="cancelBatchDeleteBtn" class="secondary-button" type="button">取消</button>
+        </div>
+      </section>
+
+      <section id="groupList" class="group-list" aria-live="polite"></section>
+
+      <div id="emptyState" class="empty-state" hidden>
+        <div class="empty-illustration" aria-hidden="true">⌘</div>
+        <h2>还没有保存任何链接</h2>
+        <p>你可以从右侧当前窗口标签页栏保存当前窗口的网页。</p>
+      </div>
+
+      <section id="settingsView" class="settings-view" hidden>
+        <header class="settings-header">
+          <div>
+            <h1 class="settings-title">设置</h1>
+            <p class="settings-subtitle">同步基础版 · 管理备份与数据安全</p>
+          </div>
+          <button id="backToWorkspaceBtn" class="primary-button" type="button">返回工作台</button>
+        </header>
+
+        <div class="settings-body">
+          <section class="settings-section">
+            <h2 class="settings-section-title">同步状态</h2>
+            <div class="settings-card">
+              <div class="settings-row">
+                <span class="settings-label">同步模式</span>
+                <span class="settings-value" id="syncModeValue">手动同步基础版</span>
+              </div>
+              <div class="settings-row">
+                <span class="settings-label">设备标识</span>
+                <span class="settings-value" id="syncDeviceIdValue">-</span>
+              </div>
+              <div class="settings-row">
+                <span class="settings-label">最近修改</span>
+                <span class="settings-value" id="syncLastModifiedValue">-</span>
+              </div>
+              <div class="settings-row">
+                <span class="settings-label">最近备份</span>
+                <span class="settings-value" id="syncLastBackupValue">从未备份</span>
+              </div>
+              <div class="settings-row">
+                <span class="settings-label">最近导入</span>
+                <span class="settings-value" id="syncLastImportValue">从未导入</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h2 class="settings-section-title">加密备份</h2>
+            <div class="settings-card">
+              <div class="settings-row">
+                <label class="settings-label" for="backupPasswordInput">备份密码</label>
+                <input id="backupPasswordInput" class="settings-input" type="password" placeholder="输入加密密码" autocomplete="off" />
+              </div>
+              <div class="settings-actions">
+                <button id="exportEncryptedBtn" class="primary-button" type="button">导出加密备份</button>
+                <button id="importEncryptedBtn" class="secondary-button" type="button">导入加密备份</button>
+              </div>
+              <p class="settings-hint">导出的备份文件将使用密码加密，导入时需要输入相同密码才能恢复数据。请妥善保管密码，忘记密码将无法恢复数据。</p>
+            </div>
+          </section>
+
+          <section class="settings-section">
+            <h2 class="settings-section-title">云端同步（后续版本开放）</h2>
+            <div class="settings-card">
+              <div class="settings-row">
+                <span class="settings-label">WebDAV 同步</span>
+                <span class="settings-value settings-value-muted">后续版本开放</span>
+              </div>
+              <div class="settings-row">
+                <span class="settings-label">GitHub Gist 同步</span>
+                <span class="settings-value settings-value-muted">后续版本开放</span>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <aside class="tabs-panel" aria-label="当前窗口标签页">
+      <header class="tabs-header">
+        <div>
+          <div id="tabsTitle" class="tabs-title">Tabs (0)</div>
+          <div class="tabs-subtitle">当前窗口</div>
+        </div>
+
+        <div class="tabs-actions">
+          <button id="refreshTabsBtn" class="icon-button text-icon-button" type="button" aria-label="刷新当前窗口标签页">刷新</button>
+          <button id="saveCurrentTabsBtn" class="primary-button" type="button">保存</button>
+        </div>
+      </header>
+
+      <div id="currentTabsList" class="current-tabs-list" aria-live="polite"></div>
+    </aside>
+  </div>
+
+  <script src="tabdesk-core.js"></script>
+  <script src="newtab.js"></script>
+</body>
+</html>

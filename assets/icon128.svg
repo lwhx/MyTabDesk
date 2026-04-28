@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" role="img" aria-label="MyTabDesk">
+  <defs>
+    <linearGradient id="g" x1="22" y1="16" x2="106" y2="112" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#38bdf8"/>
+    </linearGradient>
+  </defs>
+  <rect width="128" height="128" rx="34" fill="url(#g)"/>
+  <path d="M35 38h58v12H35V38Zm0 22h42v12H35V60Zm0 22h58v12H35V82Z" fill="#ffffff"/>
+  <circle cx="94" cy="66" r="8" fill="#eaf1ff"/>
+</svg>

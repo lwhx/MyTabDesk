@@ -1,0 +1,18 @@
+{
+  "manifest_version": 3,
+  "name": "MyTabDesk",
+  "version": "2.0.0",
+  "description": "A local-first new tab workspace for saving and restoring browser tabs.",
+  "permissions": [
+    "tabs",
+    "storage"
+  ],
+  "chrome_url_overrides": {
+    "newtab": "newtab.html"
+  },
+  "icons": {
+    "16": "assets/icon16.svg",
+    "48": "assets/icon48.svg",
+    "128": "assets/icon128.svg"
+  }
+}
