@@ -20,6 +20,8 @@ const {
   filterGroups,
   filterCurrentTabs,
   createDeviceId,
+  getCurrentTime,
+  resolveWebDavSyncUrl,
   ensureSyncSettings,
   getDataUpdatedAt,
   mergeWorkspaceData,
@@ -35,6 +37,7 @@ const {
   reorderGroups,
   reorderLinks,
   moveLinkBetweenGroups,
+  updateLink,
   addLinksToGroup,
   clearAllData
 } = tabdeskCore;
@@ -235,6 +238,84 @@ function testCreateDeviceIdUsesDevicePrefix() {
   const deviceId = createDeviceId();
 
   assert.equal(deviceId.startsWith("device-"), true);
+}
+
+/**
+ * 测试当前时间工具会对外导出给页面同步逻辑使用。
+ *
+ * @returns {void}
+ */
+function testGetCurrentTimeExported() {
+  /** 调用前的系统时间戳。 */
+  const before = Date.now();
+  /** 当前时间工具返回的时间戳。 */
+  const currentTime = getCurrentTime();
+  /** 调用后的系统时间戳。 */
+  const after = Date.now();
+
+  assert.equal(typeof getCurrentTime, "function");
+  assert.equal(typeof currentTime, "number");
+  assert.equal(currentTime >= before, true);
+  assert.equal(currentTime <= after, true);
+}
+
+/**
+ * 测试 WebDAV 目录地址会自动拼接默认同步文件名。
+ *
+ * @returns {void}
+ */
+function testResolveWebDavSyncUrlAppendsDefaultFileName() {
+  /** 根据目录地址解析后的同步文件地址。 */
+  const syncUrl = resolveWebDavSyncUrl("https://alist.whks.de/dav/tabtab");
+
+  assert.equal(syncUrl, "https://alist.whks.de/dav/tabtab/MyTabDesk.json");
+}
+
+/**
+ * 测试 WebDAV 目录地址会拼接自定义文件名。
+ *
+ * @returns {void}
+ */
+function testResolveWebDavSyncUrlAppendsCustomFileName() {
+  /** 根据目录地址和自定义文件名解析后的同步文件地址。 */
+  const syncUrl = resolveWebDavSyncUrl("https://alist.whks.de/dav/tabtab", "Backup.json");
+
+  assert.equal(syncUrl, "https://alist.whks.de/dav/tabtab/Backup.json");
+}
+
+/**
+ * 测试 WebDAV 完整 JSON 地址会保持原样。
+ *
+ * @returns {void}
+ */
+function testResolveWebDavSyncUrlKeepsJsonFileName() {
+  /** 根据完整文件地址解析后的同步文件地址。 */
+  const syncUrl = resolveWebDavSyncUrl("https://alist.whks.de/dav/tabtab/Custom.json");
+
+  assert.equal(syncUrl, "https://alist.whks.de/dav/tabtab/Custom.json");
+}
+
+/**
+ * 测试 WebDAV 完整 JSON 地址即使传入自定义文件名也会保持原样。
+ *
+ * @returns {void}
+ */
+function testResolveWebDavSyncUrlKeepsJsonFileNameWithCustomName() {
+  /** 根据完整文件地址解析后的同步文件地址。 */
+  const syncUrl = resolveWebDavSyncUrl("https://alist.whks.de/dav/tabtab/Custom.json", "Other.json");
+
+  assert.equal(syncUrl, "https://alist.whks.de/dav/tabtab/Custom.json");
+}
+
+/**
+ * 测试 WebDAV 空地址返回空字符串。
+ *
+ * @returns {void}
+ */
+function testResolveWebDavSyncUrlReturnsEmptyForEmptyInput() {
+  assert.equal(resolveWebDavSyncUrl(""), "");
+  assert.equal(resolveWebDavSyncUrl(null), "");
+  assert.equal(resolveWebDavSyncUrl(undefined), "");
 }
 
 /**
@@ -479,22 +560,55 @@ function testDetectImportConflictFlagsOlderAndDifferentDevice() {
 }
 
 /**
- * 测试导出数据会包含版本号和导出时间。
+ * 测试普通导出数据会使用 tabtab 兼容结构。
  *
  * @returns {void}
  */
-function testExportDataAddsVersionAndTimestamp() {
+function testExportDataUsesTabTabCompatibleShape() {
   /** 导出的 JSON 文本。 */
-  const exportedText = exportData(createDefaultData());
-  /** 解析后的导出备份包。 */
+  const exportedText = exportData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A",
+        groups: [
+          {
+            id: "group-a",
+            name: "分组 A",
+            links: [
+              {
+                id: "link-a",
+                title: "Example",
+                url: "https://example.com",
+                favIconUrl: "https://example.com/favicon.ico"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    settings: {}
+  });
+  /** 解析后的 tabtab 兼容备份数据。 */
   const exportedPackage = JSON.parse(exportedText);
 
-  assert.equal(exportedPackage.backupVersion, 1);
-  assert.equal(exportedPackage.appVersion, "2.0.0");
-  assert.equal(typeof exportedPackage.exportedAt, "number");
-  assert.equal(exportedPackage.deviceId.startsWith("device-"), true);
-  assert.equal(exportedPackage.data.version, 1);
-  assert.equal(exportedPackage.data.spaces.length, 1);
+  assert.equal(typeof exportedPackage.version, "number");
+  assert.deepEqual(exportedPackage.space_list, [
+    {
+      id: "space-a",
+      name: "空间 A"
+    }
+  ]);
+  assert.equal(Array.isArray(exportedPackage.spaces), false);
+  assert.equal(exportedPackage.spaces["space-a"].groups[0].tabs[0].kind, "record");
+  assert.equal(exportedPackage.spaces["space-a"].groups[0].tabs[0].id, "link-a");
+  assert.equal(exportedPackage.spaces["space-a"].groups[0].tabs[0].title, "Example");
+  assert.equal(exportedPackage.spaces["space-a"].groups[0].tabs[0].url, "https://example.com");
+  assert.equal(exportedPackage.spaces["space-a"].groups[0].tabs[0].favIconUrl, "https://example.com/favicon.ico");
+  assert.equal(exportedPackage.spaces["space-a"].groups[0].tabs[0].pinned, false);
+  assert.deepEqual(exportedPackage.spaces["space-a"].pins, {});
 }
 
 /**
@@ -605,6 +719,64 @@ function testImportDataNormalizesData() {
 
   assert.equal(importedData.settings.theme, "dark");
   assert.equal(importedData.spaces[0].groups[0].links.length, 1);
+}
+
+/**
+ * 测试导入 tabtab 原生备份会转换为工作台内部结构。
+ *
+ * @returns {void}
+ */
+function testImportDataReadsTabTabBackup() {
+  /** tabtab 原生备份导入后的标准化数据。 */
+  const importedData = importData(JSON.stringify({
+    version: 1777427016569,
+    space_list: [
+      {
+        id: "1777427013918",
+        name: "网站"
+      }
+    ],
+    spaces: {
+      "1777427013918": {
+        id: "1777427013918",
+        name: "网站",
+        groups: [
+          {
+            id: "group_1777427016546",
+            name: "2026-04-29 09:43:36",
+            tabs: [
+              {
+                kind: "record",
+                id: "41bd2472-27e4-40dc-a43c-a2e014be267a",
+                title: "用户名修改",
+                url: "https://passport.baidu.com/static/manage-chunk/change-username.html",
+                pinned: false
+              },
+              {
+                kind: "record",
+                id: "deb96ef0-4b27-4779-9c8a-dd9dbd9ebe8d",
+                title: "淘宝搜索",
+                favIconUrl: "https://www.taobao.com/favicon.ico",
+                url: "https://s.taobao.com/search?q=test",
+                pinned: false
+              }
+            ]
+          }
+        ],
+        pins: {}
+      }
+    }
+  }));
+
+  assert.equal(importedData.activeSpaceId, "1777427013918");
+  assert.equal(importedData.spaces[0].id, "1777427013918");
+  assert.equal(importedData.spaces[0].name, "网站");
+  assert.equal(importedData.spaces[0].groups[0].id, "group_1777427016546");
+  assert.equal(importedData.spaces[0].groups[0].links.length, 2);
+  assert.equal(importedData.spaces[0].groups[0].links[0].id, "41bd2472-27e4-40dc-a43c-a2e014be267a");
+  assert.equal(importedData.spaces[0].groups[0].links[0].title, "用户名修改");
+  assert.equal(importedData.spaces[0].groups[0].links[0].url, "https://passport.baidu.com/static/manage-chunk/change-username.html");
+  assert.equal(importedData.spaces[0].groups[0].links[1].favIconUrl, "https://www.taobao.com/favicon.ico");
 }
 
 /**
@@ -822,6 +994,101 @@ function testMoveLinkBetweenGroupsAppendsWhenNoTargetLink() {
   const nextData = moveLinkBetweenGroups(data, "space-a", "group-a", "group-b", "link-a", "");
   assert.deepEqual(nextData.spaces[0].groups[0].links.map((link) => link.id), []);
   assert.deepEqual(nextData.spaces[0].groups[1].links.map((link) => link.id), ["link-a"]);
+}
+
+/**
+ * 测试编辑链接会更新标题、地址和图标。
+ *
+ * @returns {void}
+ */
+function testUpdateLinkChangesTitleUrlAndIcon() {
+  /** 编辑前的工作台数据。 */
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A",
+        updatedAt: 100,
+        groups: [
+          {
+            id: "group-a",
+            name: "分组 A",
+            updatedAt: 100,
+            links: [
+              {
+                id: "link-a",
+                title: "旧标题",
+                url: "https://old.example.com",
+                favIconUrl: "https://old.example.com/icon.png",
+                createdAt: 80
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    settings: {}
+  });
+
+  /** 编辑后的工作台数据。 */
+  const nextData = updateLink(data, "space-a", "group-a", "link-a", {
+    title: "新标题",
+    url: "https://new.example.com",
+    favIconUrl: "https://new.example.com/icon.png"
+  });
+  /** 编辑后的链接数据。 */
+  const link = nextData.spaces[0].groups[0].links[0];
+
+  assert.equal(link.id, "link-a");
+  assert.equal(link.title, "新标题");
+  assert.equal(link.url, "https://new.example.com");
+  assert.equal(link.favIconUrl, "https://new.example.com/icon.png");
+  assert.equal(link.createdAt, 80);
+  assert.equal(link.updatedAt >= 100, true);
+  assert.equal(nextData.spaces[0].groups[0].updatedAt >= 100, true);
+  assert.equal(nextData.spaces[0].updatedAt >= 100, true);
+}
+
+/**
+ * 测试编辑链接时会拒绝空地址。
+ *
+ * @returns {void}
+ */
+function testUpdateLinkRejectsEmptyUrl() {
+  /** 编辑前的工作台数据。 */
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A",
+        groups: [
+          {
+            id: "group-a",
+            name: "分组 A",
+            links: [
+              {
+                id: "link-a",
+                title: "旧标题",
+                url: "https://old.example.com"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    settings: {}
+  });
+
+  assert.throws(() => {
+    updateLink(data, "space-a", "group-a", "link-a", {
+      title: "新标题",
+      url: ""
+    });
+  }, /请输入链接地址/);
 }
 
 /**
@@ -1062,6 +1329,12 @@ async function runTests() {
   testFilterGroups();
   testFilterCurrentTabs();
   testCreateDeviceIdUsesDevicePrefix();
+  testGetCurrentTimeExported();
+  testResolveWebDavSyncUrlAppendsDefaultFileName();
+  testResolveWebDavSyncUrlAppendsCustomFileName();
+  testResolveWebDavSyncUrlKeepsJsonFileName();
+  testResolveWebDavSyncUrlKeepsJsonFileNameWithCustomName();
+  testResolveWebDavSyncUrlReturnsEmptyForEmptyInput();
   testEnsureSyncSettingsAddsDefaults();
   testEnsureSyncSettingsKeepsAutoSyncOptions();
   testGetDataUpdatedAtReturnsLatestTimestamp();
@@ -1069,17 +1342,20 @@ async function runTests() {
   await testRestoreEncryptedBackupReadsLegacyXorBackup();
   await testRestoreEncryptedBackupRejectsWrongPassword();
   testDetectImportConflictFlagsOlderAndDifferentDevice();
-  testExportDataAddsVersionAndTimestamp();
+  testExportDataUsesTabTabCompatibleShape();
   testCreateBackupSafeDataRemovesSecrets();
   testImportDataRejectsInvalidText();
   testImportDataReadsPackagedBackup();
   testImportDataNormalizesData();
+  testImportDataReadsTabTabBackup();
   testMoveArrayItemReordersArray();
   testReorderSpacesMovesTargetSpace();
   testReorderGroupsMovesTargetGroup();
   testReorderLinksMovesTargetLink();
   testMoveLinkBetweenGroupsInsertsBeforeTargetLink();
   testMoveLinkBetweenGroupsAppendsWhenNoTargetLink();
+  testUpdateLinkChangesTitleUrlAndIcon();
+  testUpdateLinkRejectsEmptyUrl();
   testAddLinksToGroupDedupesByUrl();
   testMergeWorkspaceDataKeepsBothSidesNewItems();
   testMergeWorkspaceDataMergesLinksWithoutPrompt();

@@ -27,6 +27,7 @@ const DEFAULT_SYNC_SETTINGS = {
   webdavUrl: "",
   webdavUsername: "",
   webdavPassword: "",
+  webdavFilename: "",
   webdavAutoSyncEnabled: false,
   gistToken: "",
   gistId: "",
@@ -37,6 +38,11 @@ const DEFAULT_SYNC_SETTINGS = {
   lastAutoSyncError: "",
   lastSyncAt: 0
 };
+
+/**
+ * WebDAV 默认同步文件名，用于目录地址自动补齐同步文件。
+ */
+const DEFAULT_WEBDAV_SYNC_FILENAME = "MyTabDesk.json";
 
 /**
  * 默认空间 ID，用于初始化数据和清空数据后的兜底空间。
@@ -59,6 +65,32 @@ function getDefaultSpaceIcon() {
  */
 function getCurrentTime() {
   return Date.now();
+}
+
+/**
+ * 解析 WebDAV 同步文件地址，目录地址会自动拼接 JSON 文件名。
+ *
+ * @param {string} webdavUrl 用户填写的 WebDAV 地址。
+ * @param {string} [customFilename] 自定义文件名，为空时使用默认文件名。
+ * @returns {string} 最终用于上传和下载的 WebDAV 文件地址。
+ */
+function resolveWebDavSyncUrl(webdavUrl, customFilename) {
+  /** 去除首尾空白后的 WebDAV 地址。 */
+  const normalizedUrl = webdavUrl ? webdavUrl.trim() : "";
+
+  if (!normalizedUrl) {
+    return "";
+  }
+
+  if (/\.json(?:[?#].*)?$/i.test(normalizedUrl)) {
+    return normalizedUrl;
+  }
+
+  /** 使用的文件名，自定义优先，其次使用默认文件名。 */
+  const filename = customFilename ? customFilename.trim() : DEFAULT_WEBDAV_SYNC_FILENAME;
+  /** 移除尾部斜杠后的目录地址。 */
+  const directoryUrl = normalizedUrl.replace(/\/+$/, "");
+  return `${directoryUrl}/${filename}`;
 }
 
 /**
@@ -133,7 +165,8 @@ function normalizeLink(link) {
     title: link && link.title ? link.title : link && link.url ? link.url : "未命名链接",
     url: link && link.url ? link.url : "",
     favIconUrl: link && link.favIconUrl ? link.favIconUrl : "",
-    createdAt: link && link.createdAt ? link.createdAt : now
+    createdAt: link && link.createdAt ? link.createdAt : now,
+    updatedAt: link && link.updatedAt ? link.updatedAt : link && link.createdAt ? link.createdAt : now
   };
 }
 
@@ -418,6 +451,190 @@ function createBackupSafeData(data) {
 }
 
 /**
+ * 判断数据是否为 tabtab 备份结构。
+ *
+ * @param {object} data 待识别的数据对象。
+ * @returns {boolean} 是 tabtab 备份结构时返回 true，否则返回 false。
+ */
+function isTabTabBackupData(data) {
+  return Boolean(data && typeof data === "object" && Array.isArray(data.space_list) && data.spaces && typeof data.spaces === "object" && !Array.isArray(data.spaces));
+}
+
+/**
+ * 将 tabtab 标签记录转换为工作台链接数据。
+ *
+ * @param {object} tab tabtab 标签记录。
+ * @returns {object} 工作台链接数据。
+ */
+function convertTabTabTabToLink(tab) {
+  /** 当前时间戳，用于补齐创建和更新时间。 */
+  const now = getCurrentTime();
+
+  return {
+    id: tab && tab.id ? tab.id : createId("link"),
+    title: tab && tab.title ? tab.title : tab && tab.url ? tab.url : "未命名链接",
+    url: tab && tab.url ? tab.url : "",
+    favIconUrl: tab && tab.favIconUrl ? tab.favIconUrl : "",
+    createdAt: tab && tab.createdAt ? tab.createdAt : now,
+    updatedAt: tab && tab.updatedAt ? tab.updatedAt : tab && tab.createdAt ? tab.createdAt : now
+  };
+}
+
+/**
+ * 将 tabtab 分组转换为工作台分组数据。
+ *
+ * @param {object} group tabtab 分组数据。
+ * @returns {object} 工作台分组数据。
+ */
+function convertTabTabGroupToWorkspaceGroup(group) {
+  /** 当前时间戳，用于补齐创建和更新时间。 */
+  const now = getCurrentTime();
+  /** tabtab 分组内的标签记录数组。 */
+  const rawTabs = group && Array.isArray(group.tabs) ? group.tabs : [];
+
+  return {
+    id: group && group.id ? group.id : createId("group"),
+    name: group && group.name ? group.name : "未命名分组",
+    collapsed: false,
+    pinned: Boolean(group && group.pinned),
+    links: rawTabs.map(convertTabTabTabToLink).filter((link) => Boolean(link.url)),
+    createdAt: group && group.createdAt ? group.createdAt : now,
+    updatedAt: group && group.updatedAt ? group.updatedAt : now
+  };
+}
+
+/**
+ * 将 tabtab 空间转换为工作台空间数据。
+ *
+ * @param {object} space tabtab 空间详情。
+ * @param {object} spaceMeta tabtab 空间列表元信息。
+ * @returns {object} 工作台空间数据。
+ */
+function convertTabTabSpaceToWorkspaceSpace(space, spaceMeta) {
+  /** 当前时间戳，用于补齐创建和更新时间。 */
+  const now = getCurrentTime();
+  /** tabtab 空间内的分组数组。 */
+  const rawGroups = space && Array.isArray(space.groups) ? space.groups : [];
+  /** 空间 ID，优先使用空间详情，其次使用空间列表元信息。 */
+  const spaceId = space && space.id ? space.id : spaceMeta && spaceMeta.id ? spaceMeta.id : createId("space");
+
+  return {
+    id: spaceId,
+    name: space && space.name ? space.name : spaceMeta && spaceMeta.name ? spaceMeta.name : "未命名空间",
+    icon: getDefaultSpaceIcon(),
+    groups: rawGroups.map(convertTabTabGroupToWorkspaceGroup),
+    createdAt: space && space.createdAt ? space.createdAt : now,
+    updatedAt: space && space.updatedAt ? space.updatedAt : now
+  };
+}
+
+/**
+ * 将 tabtab 备份转换为工作台内部全量数据。
+ *
+ * @param {object} tabtabData tabtab 备份数据。
+ * @returns {object} 工作台内部全量数据。
+ */
+function convertTabTabBackupToWorkspaceData(tabtabData) {
+  /** tabtab 空间顺序列表。 */
+  const spaceList = Array.isArray(tabtabData.space_list) ? tabtabData.space_list : [];
+  /** 已按顺序转换的空间 ID 集合。 */
+  const usedSpaceIds = new Set();
+  /** 按 tabtab 空间列表顺序转换后的空间数组。 */
+  const orderedSpaces = spaceList
+    .map((spaceMeta) => {
+      /** 当前空间 ID。 */
+      const spaceId = spaceMeta && spaceMeta.id ? spaceMeta.id : "";
+      /** 当前空间详情。 */
+      const space = spaceId && tabtabData.spaces ? tabtabData.spaces[spaceId] : null;
+
+      if (!space) {
+        return null;
+      }
+
+      usedSpaceIds.add(spaceId);
+      return convertTabTabSpaceToWorkspaceSpace(space, spaceMeta);
+    })
+    .filter(Boolean);
+  /** tabtab 空间对象中未出现在 space_list 的兜底空间数组。 */
+  const remainingSpaces = Object.keys(tabtabData.spaces || {})
+    .filter((spaceId) => !usedSpaceIds.has(spaceId))
+    .map((spaceId) => convertTabTabSpaceToWorkspaceSpace(tabtabData.spaces[spaceId], { id: spaceId }));
+  /** 合并后的空间数组。 */
+  const spaces = orderedSpaces.concat(remainingSpaces);
+
+  return normalizeData({
+    version: 1,
+    activeSpaceId: spaces.length > 0 ? spaces[0].id : DEFAULT_SPACE_ID,
+    spaces,
+    settings: {}
+  });
+}
+
+/**
+ * 将工作台链接转换为 tabtab 标签记录。
+ *
+ * @param {object} link 工作台链接数据。
+ * @returns {object} tabtab 标签记录。
+ */
+function convertLinkToTabTabTab(link) {
+  return {
+    kind: "record",
+    id: link.id,
+    title: link.title || link.url,
+    favIconUrl: link.favIconUrl || "",
+    url: link.url,
+    pinned: Boolean(link.pinned)
+  };
+}
+
+/**
+ * 将工作台分组转换为 tabtab 分组数据。
+ *
+ * @param {object} group 工作台分组数据。
+ * @returns {object} tabtab 分组数据。
+ */
+function convertGroupToTabTabGroup(group) {
+  return {
+    id: group.id,
+    name: group.name,
+    tabs: group.links.map(convertLinkToTabTabTab)
+  };
+}
+
+/**
+ * 将工作台数据转换为 tabtab 兼容备份结构。
+ *
+ * @param {object} data 工作台全量数据。
+ * @returns {object} tabtab 兼容备份结构。
+ */
+function convertWorkspaceDataToTabTabBackup(data) {
+  /** 标准化后的工作台数据。 */
+  const normalizedData = normalizeData(data);
+  /** tabtab 空间详情对象。 */
+  const spaces = {};
+  /** tabtab 空间顺序列表。 */
+  const spaceList = normalizedData.spaces.map((space) => {
+    spaces[space.id] = {
+      id: space.id,
+      name: space.name,
+      groups: space.groups.map(convertGroupToTabTabGroup),
+      pins: {}
+    };
+
+    return {
+      id: space.id,
+      name: space.name
+    };
+  });
+
+  return {
+    version: getCurrentTime(),
+    space_list: spaceList,
+    spaces
+  };
+}
+
+/**
  * 标准化普通备份数据包，兼容旧版直接导出的数据结构。
  *
  * @param {object} parsedData 解析后的备份或全量数据对象。
@@ -426,6 +643,10 @@ function createBackupSafeData(data) {
 function extractBackupData(parsedData) {
   if (!parsedData || typeof parsedData !== "object") {
     return parsedData;
+  }
+
+  if (isTabTabBackupData(parsedData)) {
+    return convertTabTabBackupToWorkspaceData(parsedData);
   }
 
   if (parsedData.data && typeof parsedData.data === "object") {
@@ -442,18 +663,10 @@ function extractBackupData(parsedData) {
  * @returns {string} 可下载备份的 JSON 字符串。
  */
 function exportData(data) {
-  /** 导出前移除敏感同步凭据的数据。 */
-  const normalizedData = createBackupSafeData(data);
-  /** 当前时间戳。 */
-  const now = getCurrentTime();
+  /** tabtab 兼容备份结构。 */
+  const tabtabBackup = convertWorkspaceDataToTabTabBackup(data);
 
-  return JSON.stringify({
-    backupVersion: BACKUP_VERSION,
-    appVersion: APP_VERSION,
-    exportedAt: now,
-    deviceId: normalizedData.settings.sync.deviceId || "",
-    data: normalizedData
-  }, null, 2);
+  return JSON.stringify(tabtabBackup, null, 2);
 }
 
 /**
@@ -576,6 +789,52 @@ function reorderLinks(data, spaceId, groupId, sourceLinkId, targetLinkId) {
   const toIndex = group.links.findIndex((link) => link.id === targetLinkId);
   group.links = moveArrayItem(group.links, fromIndex, toIndex);
   group.updatedAt = getCurrentTime();
+  return nextData;
+}
+
+/**
+ * 更新指定链接的标题、地址和图标。
+ *
+ * @param {object} data 当前全量数据。
+ * @param {string} spaceId 空间 ID。
+ * @param {string} groupId 分组 ID。
+ * @param {string} linkId 链接 ID。
+ * @param {object} patch 链接更新字段。
+ * @returns {object} 更新链接后的全量数据。
+ * @throws {Error} 当链接地址为空时抛出错误。
+ */
+function updateLink(data, spaceId, groupId, linkId, patch) {
+  /** 标准化后的下一份数据。 */
+  const nextData = normalizeData(data);
+  /** 当前操作的空间。 */
+  const space = nextData.spaces.find((item) => item.id === spaceId);
+  /** 当前操作的分组。 */
+  const group = space ? space.groups.find((item) => item.id === groupId) : null;
+  /** 当前操作的链接。 */
+  const link = group ? group.links.find((item) => item.id === linkId) : null;
+
+  if (!link) {
+    return nextData;
+  }
+
+  /** 去除前后空格后的链接地址。 */
+  const nextUrl = String(patch && patch.url ? patch.url : "").trim();
+
+  if (!nextUrl) {
+    throw new Error("请输入链接地址。");
+  }
+
+  /** 去除前后空格后的链接标题。 */
+  const nextTitle = String(patch && patch.title ? patch.title : "").trim();
+  /** 去除前后空格后的图标地址。 */
+  const nextFavIconUrl = String(patch && patch.favIconUrl ? patch.favIconUrl : "").trim();
+
+  link.title = nextTitle || nextUrl;
+  link.url = nextUrl;
+  link.favIconUrl = nextFavIconUrl;
+  link.updatedAt = getCurrentTime();
+  group.updatedAt = getCurrentTime();
+  space.updatedAt = getCurrentTime();
   return nextData;
 }
 
@@ -917,6 +1176,7 @@ function ensureSyncSettings(data, deviceId) {
     webdavUrl: nextData.settings.sync.webdavUrl || DEFAULT_SYNC_SETTINGS.webdavUrl,
     webdavUsername: nextData.settings.sync.webdavUsername || DEFAULT_SYNC_SETTINGS.webdavUsername,
     webdavPassword: nextData.settings.sync.webdavPassword || DEFAULT_SYNC_SETTINGS.webdavPassword,
+    webdavFilename: nextData.settings.sync.webdavFilename || DEFAULT_SYNC_SETTINGS.webdavFilename,
     webdavAutoSyncEnabled: Boolean(nextData.settings.sync.webdavAutoSyncEnabled),
     gistToken: nextData.settings.sync.gistToken || DEFAULT_SYNC_SETTINGS.gistToken,
     gistId: nextData.settings.sync.gistId || DEFAULT_SYNC_SETTINGS.gistId,
@@ -1302,11 +1562,14 @@ const tabdeskCoreApi = {
   DEFAULT_SPACE_ID,
   APP_VERSION,
   BACKUP_VERSION,
+  DEFAULT_WEBDAV_SYNC_FILENAME,
   createDefaultData,
   normalizeData,
   migrateData,
   createId,
   createDeviceId,
+  getCurrentTime,
+  resolveWebDavSyncUrl,
   ensureSyncSettings,
   getDataUpdatedAt,
   mergeWorkspaceData,
@@ -1324,11 +1587,15 @@ const tabdeskCoreApi = {
   importData,
   extractBackupData,
   createBackupSafeData,
+  isTabTabBackupData,
+  convertTabTabBackupToWorkspaceData,
+  convertWorkspaceDataToTabTabBackup,
   moveArrayItem,
   reorderSpaces,
   reorderGroups,
   reorderLinks,
   moveLinkBetweenGroups,
+  updateLink,
   addLinksToGroup,
   clearAllData
 };

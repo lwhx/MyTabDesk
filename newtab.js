@@ -7,6 +7,8 @@ const {
   normalizeData,
   migrateData,
   createId,
+  getCurrentTime,
+  resolveWebDavSyncUrl,
   ensureSyncSettings,
   getDataUpdatedAt,
   mergeWorkspaceData,
@@ -26,6 +28,7 @@ const {
   reorderGroups,
   reorderLinks,
   moveLinkBetweenGroups,
+  updateLink,
   addLinksToGroup,
   clearAllData
 } = globalThis.MyTabDeskCore;
@@ -66,6 +69,14 @@ const state = {
   lastWorkspaceSnapshot: "",
   /** 正在显示菜单的空间 ID。 */
   openSpaceMenuId: "",
+  /** 正在显示菜单的链接 ID。 */
+  openLinkMenuId: "",
+  /** 正在编辑的链接上下文。 */
+  editingLinkContext: null,
+  /** 当前通用弹窗关闭后的回调函数。 */
+  appDialogResolver: null,
+  /** 当前页面通用弹窗类型。 */
+  appDialogType: "alert",
   /** 是否正在显示创建空间方式菜单。 */
   createSpaceMenuOpen: false,
   /** 当前文件导入模式：data 表示全量数据，space 表示单空间。 */
@@ -224,7 +235,7 @@ async function loadData() {
     const result = await chrome.storage.local.get(STORAGE_KEY);
     return migrateData(result[STORAGE_KEY]);
   } catch (error) {
-    alert("数据读取失败，已为你恢复默认数据。");
+    await showAlert("数据读取失败，已为你恢复默认数据。");
     return createDefaultData();
   }
 }
@@ -262,7 +273,7 @@ async function saveData(options = {}) {
       [STORAGE_KEY]: state.data
     });
   } catch (error) {
-    alert("数据保存失败，请稍后重试。");
+    await showAlert("数据保存失败，请稍后重试。");
   }
 
   if (workspaceChanged) {
@@ -395,6 +406,119 @@ function createFavicon(src, title) {
     image.replaceWith(fallback);
   });
   return image;
+}
+
+/**
+ * 关闭页面通用弹窗并返回结果。
+ *
+ * @param {boolean} confirmed 用户是否确认。
+ * @returns {void}
+ */
+function closeAppDialog(confirmed) {
+  /** 当前通用弹窗关闭后的回调函数。 */
+  const resolver = state.appDialogResolver;
+  /** 当前弹窗是否为输入类型。 */
+  const isPrompt = state.appDialogType === "prompt";
+  /** 输入型弹窗的返回值。 */
+  const promptValue = confirmed ? elements.appDialogInput.value : null;
+
+  state.appDialogResolver = null;
+  state.appDialogType = "alert";
+  elements.appDialog.hidden = true;
+
+  if (resolver) {
+    resolver(isPrompt ? promptValue : confirmed);
+  }
+}
+
+/**
+ * 显示页面内统一弹窗。
+ *
+ * @param {object} options 弹窗配置。
+ * @returns {Promise<boolean|string|null>} 弹窗关闭后的结果。
+ */
+function showAppDialog(options) {
+  /** 弹窗类型。 */
+  const type = options.type || "alert";
+  /** 是否为确认或输入弹窗。 */
+  const needsCancel = type === "confirm" || type === "prompt";
+
+  state.appDialogType = type;
+  elements.appDialogTitle.textContent = options.title || "提示";
+  elements.appDialogMessage.textContent = options.message || "";
+  elements.appDialogInputWrap.hidden = type !== "prompt";
+  elements.appDialogInput.value = options.defaultValue || "";
+  elements.appDialogInput.setAttribute("aria-label", options.inputLabel || options.title || "输入内容");
+  elements.appDialogCancelBtn.hidden = !needsCancel;
+  elements.appDialogCancelBtn.textContent = options.cancelText || "取消";
+  elements.appDialogConfirmBtn.textContent = options.confirmText || "确认";
+  elements.appDialog.hidden = false;
+
+  return new Promise((resolve) => {
+    state.appDialogResolver = resolve;
+    requestAnimationFrame(() => {
+      if (type === "prompt") {
+        elements.appDialogInput.focus();
+        elements.appDialogInput.select();
+        return;
+      }
+
+      elements.appDialogConfirmBtn.focus();
+    });
+  });
+}
+
+/**
+ * 显示页面内提示弹窗。
+ *
+ * @param {string} message 提示文本。
+ * @param {string} title 弹窗标题。
+ * @returns {Promise<boolean>} 用户确认后返回 true。
+ */
+function showAlert(message, title = "提示") {
+  return showAppDialog({
+    type: "alert",
+    title,
+    message,
+    confirmText: "知道了"
+  });
+}
+
+/**
+ * 显示页面内确认弹窗。
+ *
+ * @param {string} message 确认文本。
+ * @param {string} title 弹窗标题。
+ * @returns {Promise<boolean>} 用户确认时返回 true，取消时返回 false。
+ */
+function showConfirm(message, title = "确认操作") {
+  return showAppDialog({
+    type: "confirm",
+    title,
+    message,
+    confirmText: "确认",
+    cancelText: "取消"
+  });
+}
+
+/**
+ * 显示页面内输入弹窗。
+ *
+ * @param {string} message 输入说明文本。
+ * @param {string} defaultValue 默认输入值。
+ * @param {string} title 弹窗标题。
+ * @returns {Promise<string|null>} 用户输入文本，取消时返回 null。
+ */
+function showPrompt(message, defaultValue = "", title = "请输入") {
+  return showAppDialog({
+    type: "prompt",
+    title,
+    message,
+    defaultValue,
+    inputLabel: message,
+    confirmText: "确认",
+    cancelText: "取消"
+  });
 }
 
 /**
@@ -974,9 +1098,8 @@ function createMoveGroupMenuElement(group) {
  * @returns {HTMLElement} 链接卡片元素。
  */
 function createLinkElement(groupId, link) {
-  /** 链接卡片按钮。 */
-  const card = document.createElement("button");
-  card.type = "button";
+  /** 链接卡片容器。 */
+  const card = document.createElement("article");
   card.className = "link-card";
   card.title = `${link.title}\n${link.url}`;
   card.draggable = true;
@@ -986,9 +1109,9 @@ function createLinkElement(groupId, link) {
     card.classList.add("batch-mode");
   }
 
-  card.addEventListener("click", () => {
-    state.movingGroupId = "";
-  });
+  if (state.openLinkMenuId === link.id) {
+    card.classList.add("menu-open");
+  }
 
   if (state.selectedLinkIds.has(link.id)) {
     card.classList.add("selected");
@@ -1000,14 +1123,15 @@ function createLinkElement(groupId, link) {
   content.append(createTextElement("div", "link-title", link.title || link.url));
   content.append(createTextElement("div", "link-url", link.url));
 
-  /** 单个链接删除按钮。 */
-  const deleteButton = document.createElement("button");
-  deleteButton.type = "button";
-  deleteButton.className = "link-action-button";
-  deleteButton.textContent = "×";
-  deleteButton.setAttribute("aria-label", `删除链接 ${link.title || link.url}`);
+  /** 链接主内容按钮。 */
+  const contentButton = document.createElement("button");
+  contentButton.type = "button";
+  contentButton.className = "link-main-button";
+  contentButton.setAttribute("aria-label", `打开链接 ${link.title || link.url}`);
+  contentButton.addEventListener("click", () => {
+    state.movingGroupId = "";
+    state.openLinkMenuId = "";
 
-  card.addEventListener("click", () => {
     if (state.batchDeleteEnabled) {
       toggleSelectedLink(link.id);
       return;
@@ -1015,9 +1139,24 @@ function createLinkElement(groupId, link) {
 
     openLink(link.url);
   });
+  contentButton.append(createFavicon(link.favIconUrl, link.title || link.url), content);
+
+  /** 链接更多操作按钮。 */
+  const moreButton = document.createElement("button");
+  moreButton.type = "button";
+  moreButton.className = "link-action-button";
+  moreButton.textContent = "⋯";
+  moreButton.setAttribute("aria-label", `打开链接 ${link.title || link.url} 的操作菜单`);
+  moreButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    state.openLinkMenuId = state.openLinkMenuId === link.id ? "" : link.id;
+    state.movingGroupId = "";
+    renderGroups();
+  });
 
   card.addEventListener("dragstart", (event) => {
     event.stopPropagation();
+    state.openLinkMenuId = "";
     state.draggedLink = {
       groupId,
       linkId: link.id
@@ -1043,11 +1182,6 @@ function createLinkElement(groupId, link) {
     await handleLinkDrop(groupId, link.id);
   });
 
-  deleteButton.addEventListener("click", async (event) => {
-    event.stopPropagation();
-    await deleteLink(groupId, link.id);
-  });
-
   if (state.batchDeleteEnabled) {
     /** 批量删除模式下的勾选状态标记。 */
     const checkbox = document.createElement("span");
@@ -1056,8 +1190,50 @@ function createLinkElement(groupId, link) {
     card.append(checkbox);
   }
 
-  card.append(createFavicon(link.favIconUrl, link.title || link.url), content, deleteButton);
+  card.append(contentButton, moreButton);
+
+  if (state.openLinkMenuId === link.id) {
+    card.append(createLinkActionMenuElement(groupId, link));
+  }
+
   return card;
+}
+
+/**
+ * 创建链接卡片的更多操作菜单。
+ *
+ * @param {string} groupId 链接所属分组 ID。
+ * @param {object} link 链接数据。
+ * @returns {HTMLElement} 链接操作菜单元素。
+ */
+function createLinkActionMenuElement(groupId, link) {
+  /** 链接操作菜单容器。 */
+  const menu = document.createElement("div");
+  menu.className = "link-action-menu";
+
+  /** 编辑链接按钮。 */
+  const editButton = document.createElement("button");
+  editButton.type = "button";
+  editButton.className = "link-menu-action";
+  editButton.textContent = "编辑";
+  editButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    openEditLinkDialog(groupId, link.id);
+  });
+
+  /** 删除链接按钮。 */
+  const deleteButton = document.createElement("button");
+  deleteButton.type = "button";
+  deleteButton.className = "link-menu-action danger";
+  deleteButton.textContent = "删除";
+  deleteButton.addEventListener("click", async (event) => {
+    event.stopPropagation();
+    state.openLinkMenuId = "";
+    await deleteLink(groupId, link.id);
+  });
+
+  menu.append(editButton, deleteButton);
+  return menu;
 }
 
 /**
@@ -1160,9 +1336,9 @@ async function createBlankSpaceFromMenu() {
  *
  * @returns {void}
  */
-function showTobyImportPlaceholder() {
+async function showTobyImportPlaceholder() {
   closeCreateSpaceMenu();
-  alert("Toby 导入即将支持，后续会解析 Toby 导出的空间数据。");
+  await showAlert("Toby 导入即将支持，后续会解析 Toby 导出的空间数据。");
 }
 
 /**
@@ -1170,9 +1346,9 @@ function showTobyImportPlaceholder() {
  *
  * @returns {void}
  */
-function showBookmarksImportPlaceholder() {
+async function showBookmarksImportPlaceholder() {
   closeCreateSpaceMenu();
-  alert("浏览器书签导入需要启用 bookmarks 权限，后续会接入 chrome.bookmarks 读取书签。");
+  await showAlert("浏览器书签导入需要启用 bookmarks 权限，后续会接入 chrome.bookmarks 读取书签。");
 }
 
 /**
@@ -1280,12 +1456,12 @@ async function deleteSpace(spaceId) {
   }
 
   if (state.data.spaces.length <= 1) {
-    alert("至少需要保留一个空间。");
+    await showAlert("至少需要保留一个空间。");
     return;
   }
 
   /** 用户删除确认结果。 */
-  const confirmed = confirm(`确定删除空间「${space.name}」吗？该空间下的所有分组和链接都会被删除。`);
+  const confirmed = await showConfirm(`确定删除空间「${space.name}」吗？该空间下的所有分组和链接都会被删除。`);
 
   if (!confirmed) {
     return;
@@ -1316,11 +1492,11 @@ async function createGroup() {
   }
 
   /** 用户输入的分组名称。 */
-  const name = prompt("请输入分组名称");
+  const name = await showPrompt("请输入分组名称", "", "添加分组");
 
   if (!name || !name.trim()) {
     if (name !== null) {
-      alert("请输入分组名称");
+      await showAlert("请输入分组名称");
     }
     return;
   }
@@ -1359,7 +1535,7 @@ async function deleteGroup(groupId) {
   }
 
   /** 用户删除确认结果。 */
-  const confirmed = confirm(`确定删除分组「${group.name}」吗？该分组下的所有链接都会被删除。`);
+  const confirmed = await showConfirm(`确定删除分组「${group.name}」吗？该分组下的所有链接都会被删除。`);
 
   if (!confirmed) {
     return;
@@ -1429,6 +1605,7 @@ async function toggleGroupPinned(groupId) {
  */
 function toggleMoveGroupMenu(groupId) {
   state.movingGroupId = state.movingGroupId === groupId ? "" : groupId;
+  state.openLinkMenuId = "";
   state.editingGroupId = "";
   renderGroups();
 }
@@ -1505,6 +1682,103 @@ async function renameGroup(groupId, name) {
 }
 
 /**
+ * 打开编辑链接弹窗。
+ *
+ * @param {string} groupId 链接所属分组 ID。
+ * @param {string} linkId 链接 ID。
+ * @returns {void}
+ */
+function openEditLinkDialog(groupId, linkId) {
+  /** 当前激活空间。 */
+  const activeSpace = getActiveSpace();
+  /** 链接所属分组。 */
+  const group = activeSpace && activeSpace.groups.find((item) => item.id === groupId);
+  /** 待编辑链接。 */
+  const link = group && group.links.find((item) => item.id === linkId);
+
+  if (!activeSpace || !group || !link) {
+    return;
+  }
+
+  state.editingLinkContext = {
+    spaceId: activeSpace.id,
+    groupId,
+    linkId
+  };
+  state.openLinkMenuId = "";
+  elements.editLinkTitleInput.value = link.title || "";
+  elements.editLinkUrlInput.value = link.url || "";
+  elements.editLinkIconInput.value = link.favIconUrl || "";
+  elements.editLinkError.textContent = "";
+  elements.editLinkDialog.hidden = false;
+  renderGroups();
+  requestAnimationFrame(() => {
+    elements.editLinkTitleInput.focus();
+    elements.editLinkTitleInput.select();
+  });
+}
+
+/**
+ * 关闭编辑链接弹窗。
+ *
+ * @returns {void}
+ */
+function closeEditLinkDialog() {
+  state.editingLinkContext = null;
+  elements.editLinkTitleInput.value = "";
+  elements.editLinkUrlInput.value = "";
+  elements.editLinkIconInput.value = "";
+  elements.editLinkError.textContent = "";
+  elements.editLinkDialog.hidden = true;
+}
+
+/**
+ * 提交编辑链接弹窗。
+ *
+ * @returns {Promise<void>} 保存完成后结束。
+ */
+async function submitEditLinkDialog() {
+  if (!state.editingLinkContext) {
+    closeEditLinkDialog();
+    return;
+  }
+
+  /** 去除前后空格后的链接标题。 */
+  const title = elements.editLinkTitleInput.value.trim();
+  /** 去除前后空格后的链接地址。 */
+  const url = elements.editLinkUrlInput.value.trim();
+  /** 去除前后空格后的链接图标地址。 */
+  const favIconUrl = elements.editLinkIconInput.value.trim();
+
+  if (!url) {
+    elements.editLinkError.textContent = "请输入链接地址。";
+    elements.editLinkUrlInput.focus();
+    return;
+  }
+
+  if (!isValidTabUrl(url)) {
+    elements.editLinkError.textContent = "这个链接地址不能保存，请输入普通网页链接。";
+    elements.editLinkUrlInput.focus();
+    return;
+  }
+
+  try {
+    /** 当前编辑上下文。 */
+    const context = state.editingLinkContext;
+    state.data = updateLink(state.data, context.spaceId, context.groupId, context.linkId, {
+      title,
+      url,
+      favIconUrl
+    });
+    closeEditLinkDialog();
+    await saveData();
+    renderAll();
+  } catch (error) {
+    elements.editLinkError.textContent = error.message || "保存失败，请检查输入内容。";
+  }
+}
+
+/**
  * 删除指定链接。
  *
  * @param {string} groupId 链接所属分组 ID。
@@ -1522,7 +1796,7 @@ async function deleteLink(groupId, linkId) {
   }
 
   /** 用户删除确认结果。 */
-  const confirmed = confirm("确定删除这个链接吗？");
+  const confirmed = await showConfirm("确定删除这个链接吗？");
 
   if (!confirmed) {
     return;
@@ -1532,6 +1806,7 @@ async function deleteLink(groupId, linkId) {
   group.updatedAt = Date.now();
   activeSpace.updatedAt = Date.now();
   state.selectedLinkIds.delete(linkId);
+  state.openLinkMenuId = "";
 
   await saveData();
   renderAll();
@@ -1569,13 +1844,13 @@ async function openGroup(groupId) {
   const group = activeSpace && activeSpace.groups.find((item) => item.id === groupId);
 
   if (!group || group.links.length === 0) {
-    alert("这个分组里没有链接。");
+    await showAlert("这个分组里没有链接。");
     return;
   }
 
   if (group.links.length > 20) {
     /** 大批量打开前的用户确认结果。 */
-    const confirmed = confirm(`该分组包含 ${group.links.length} 个链接，确定全部打开吗？`);
+    const confirmed = await showConfirm(`该分组包含 ${group.links.length} 个链接，确定全部打开吗？`);
 
     if (!confirmed) {
       return;
@@ -1647,14 +1922,14 @@ async function saveCurrentTabsToGroup() {
   const links = tabsToLinks(state.currentTabs);
 
   if (links.length === 0) {
-    alert("当前窗口没有可保存的普通网页标签。");
+    await showAlert("当前窗口没有可保存的普通网页标签。");
     return;
   }
 
   /** 默认分组名称。 */
   const defaultName = `保存于 ${formatDateTime(Date.now())}`;
   /** 用户输入的分组名称。 */
-  const name = prompt("请输入分组名称", defaultName);
+  const name = await showPrompt("请输入分组名称", defaultName, "保存当前标签页");
 
   if (!name || !name.trim()) {
     return;
@@ -1692,14 +1967,14 @@ async function saveSingleTabToGroup(tab) {
   }
 
   if (activeSpace.groups.length === 0) {
-    alert("请先创建一个分组，再保存单个标签。");
+    await showAlert("请先创建一个分组，再保存单个标签。");
     return;
   }
 
   /** 分组选择提示文本。 */
   const groupOptions = activeSpace.groups.map((group, index) => `${index + 1}. ${group.name}`).join("\n");
   /** 用户输入的分组序号。 */
-  const input = prompt(`请输入要保存到的分组序号：\n${groupOptions}`, "1");
+  const input = await showPrompt(`请输入要保存到的分组序号：\n${groupOptions}`, "1", "保存到分组");
 
   if (!input) {
     return;
@@ -1711,7 +1986,7 @@ async function saveSingleTabToGroup(tab) {
   const targetGroup = activeSpace.groups[groupIndex];
 
   if (!Number.isInteger(groupIndex) || !targetGroup) {
-    alert("请输入有效的分组序号。");
+    await showAlert("请输入有效的分组序号。");
     return;
   }
 
@@ -1835,7 +2110,7 @@ async function importSelectedFile(event) {
     /** 解析并迁移后的导入数据。 */
     const importedData = importData(text);
     /** 覆盖当前数据前的用户确认结果。 */
-    const confirmed = confirm("导入会覆盖当前所有本地数据，确定继续吗？");
+    const confirmed = await showConfirm("导入会覆盖当前所有本地数据，确定继续吗？");
 
     if (!confirmed) {
       return;
@@ -1847,9 +2122,9 @@ async function importSelectedFile(event) {
     state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
     await saveData({ skipAutoSync: true });
     renderAll();
-    alert("数据导入成功。");
+    await showAlert("数据导入成功。");
   } catch (error) {
-    alert(error.message || "数据导入失败，请检查文件内容。");
+    await showAlert(error.message || "数据导入失败，请检查文件内容。");
   } finally {
     state.importMode = "data";
   }
@@ -1913,7 +2188,7 @@ async function importSpaceFromText(text) {
   state.data.activeSpaceId = space.id;
   await saveData();
   renderAll();
-  alert("空间导入成功。");
+  await showAlert("空间导入成功。");
 }
 
 /**
@@ -1923,7 +2198,7 @@ async function importSpaceFromText(text) {
  */
 async function clearData() {
   /** 清空数据前的用户确认结果。 */
-  const confirmed = confirm("确定清空所有数据并恢复默认空间吗？该操作不可撤销，建议先导出备份。");
+  const confirmed = await showConfirm("确定清空所有数据并恢复默认空间吗？该操作不可撤销，建议先导出备份。");
 
   if (!confirmed) {
     return;
@@ -2007,12 +2282,12 @@ function toggleSelectedLink(linkId) {
  */
 async function confirmBatchDelete() {
   if (state.selectedLinkIds.size === 0) {
-    alert("请先选择需要删除的链接。");
+    await showAlert("请先选择需要删除的链接。");
     return;
   }
 
   /** 批量删除前的用户确认结果。 */
-  const confirmed = confirm(`确定删除选中的 ${state.selectedLinkIds.size} 个链接吗？`);
+  const confirmed = await showConfirm(`确定删除选中的 ${state.selectedLinkIds.size} 个链接吗？`);
 
   if (!confirmed) {
     return;
@@ -2229,6 +2504,7 @@ function renderSettingsStatus() {
   elements.webdavUrlInput.value = sync.webdavUrl || "";
   elements.webdavUsernameInput.value = sync.webdavUsername || "";
   elements.webdavPasswordInput.value = sync.webdavPassword || "";
+  elements.webdavFilenameInput.value = sync.webdavFilename || "";
   elements.gistTokenInput.value = sync.gistToken || "";
   elements.gistIdInput.value = sync.gistId || "";
   elements.gistFilenameInput.value = sync.gistFilename || "mytabdesk-sync.json";
@@ -2244,7 +2520,7 @@ async function handleExportEncryptedBackup() {
   const password = elements.backupPasswordInput.value;
 
   if (!password) {
-    alert("请先输入备份密码。");
+    await showAlert("请先输入备份密码。");
     return;
   }
 
@@ -2265,9 +2541,9 @@ async function handleExportEncryptedBackup() {
     state.data.settings.sync.lastBackupAt = getCurrentTime();
     await saveData({ skipAutoSync: true });
     renderSettingsStatus();
-    alert("加密备份已导出。");
+    await showAlert("加密备份已导出。");
   } catch (error) {
-    alert("加密备份导出失败：" + (error.message || "未知错误"));
+    await showAlert("加密备份导出失败：" + (error.message || "未知错误"));
   }
 }
 
@@ -2276,12 +2552,12 @@ async function handleExportEncryptedBackup() {
  *
  * @returns {void}
  */
-function requestImportEncryptedBackup() {
+async function requestImportEncryptedBackup() {
   /** 用户输入的备份密码。 */
   const password = elements.backupPasswordInput.value;
 
   if (!password) {
-    alert("请先输入备份密码。");
+    await showAlert("请先输入备份密码。");
     return;
   }
 
@@ -2306,7 +2582,7 @@ async function importEncryptedBackupFile(event) {
   const password = elements.backupPasswordInput.value;
 
   if (!password) {
-    alert("请先输入备份密码。");
+    await showAlert("请先输入备份密码。");
     elements.encryptedBackupFileInput.value = "";
     return;
   }
@@ -2331,7 +2607,10 @@ async function importEncryptedBackupFile(event) {
         messages.push("该备份来自另一台设备。");
       }
 
-      if (!confirm(messages.join("\n") + "\n是否继续导入？")) {
+      /** 是否继续导入冲突备份。 */
+      const confirmed = await showConfirm(messages.join("\n") + "\n是否继续导入？");
+
+      if (!confirmed) {
         elements.encryptedBackupFileInput.value = "";
         return;
       }
@@ -2342,9 +2621,9 @@ async function importEncryptedBackupFile(event) {
     state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
     await saveData({ skipAutoSync: true });
     renderAll();
-    alert("加密备份已成功导入。");
+    await showAlert("加密备份已成功导入。");
   } catch (error) {
-    alert("导入失败：" + (error.message || "密码错误或文件损坏"));
+    await showAlert("导入失败：" + (error.message || "密码错误或文件损坏"));
   }
 
   elements.encryptedBackupFileInput.value = "";
@@ -2364,6 +2643,7 @@ function readSyncSettingsForm() {
     webdavUrl: elements.webdavUrlInput.value.trim(),
     webdavUsername: elements.webdavUsernameInput.value.trim(),
     webdavPassword: elements.webdavPasswordInput.value,
+    webdavFilename: elements.webdavFilenameInput.value.trim(),
     webdavAutoSyncEnabled: elements.webdavAutoSyncSwitch.checked,
     gistToken: elements.gistTokenInput.value.trim(),
     gistId: elements.gistIdInput.value.trim(),
@@ -2414,7 +2694,7 @@ function selectSyncProvider(provider) {
  */
 async function handleSaveSyncSettings() {
   await saveSyncSettingsFromForm();
-  alert("同步配置已保存。");
+  await showAlert("同步配置已保存。");
 }
 
 /**
@@ -2600,8 +2880,10 @@ function validateSyncSettings() {
  * @throws {Error} 当服务端返回失败状态时抛出错误。
  */
 async function uploadWebDav(sync, payload) {
+  /** 解析后的 WebDAV 同步文件地址。 */
+  const fileUrl = resolveWebDavSyncUrl(sync.webdavUrl, sync.webdavFilename);
   /** WebDAV 上传响应。 */
-  const response = await fetch(sync.webdavUrl, {
+  const response = await fetch(fileUrl, {
     method: "PUT",
     headers: {
       Authorization: `Basic ${btoa(`${sync.webdavUsername}:${sync.webdavPassword}`)}`,
@@ -2623,8 +2905,10 @@ async function uploadWebDav(sync, payload) {
  * @throws {Error} 当服务端返回失败状态时抛出错误。
  */
 async function downloadWebDav(sync) {
+  /** 解析后的 WebDAV 同步文件地址。 */
+  const fileUrl = resolveWebDavSyncUrl(sync.webdavUrl, sync.webdavFilename);
   /** WebDAV 下载响应。 */
-  const response = await fetch(sync.webdavUrl, {
+  const response = await fetch(fileUrl, {
     method: "GET",
     headers: {
       Authorization: `Basic ${btoa(`${sync.webdavUsername}:${sync.webdavPassword}`)}`
@@ -2748,9 +3032,9 @@ async function uploadManualSync(provider) {
     state.data.settings.sync.lastAutoSyncError = "";
     await saveData({ skipAutoSync: true });
     renderSettingsStatus();
-    alert("已上传到云端。");
+    await showAlert("已上传到云端。");
   } catch (error) {
-    alert(error.message || "上传到云端失败。");
+    await showAlert(error.message || "上传到云端失败。");
   }
 }
 
@@ -2767,9 +3051,9 @@ async function downloadManualSync(provider) {
     const sync = validateSyncSettings();
     await runBidirectionalSync(sync);
     renderAll();
-    alert("已从云端下载、自动合并并回传云端。");
+    await showAlert("已从云端下载、自动合并并回传云端。");
   } catch (error) {
-    alert(error.message || "从云端下载失败。");
+    await showAlert(error.message || "从云端下载失败。");
   }
 }
 
@@ -2779,6 +3063,65 @@ async function downloadManualSync(provider) {
  * @returns {void}
  */
 function bindEvents() {
+  elements.appDialog.addEventListener("click", (event) => {
+    if (event.target === elements.appDialog) {
+      closeAppDialog(state.appDialogType === "alert");
+    }
+  });
+  elements.appDialog.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeAppDialog(state.appDialogType === "alert");
+    }
+  });
+  elements.appDialogCancelBtn.addEventListener("click", () => closeAppDialog(false));
+  elements.appDialogConfirmBtn.addEventListener("click", () => closeAppDialog(true));
+  elements.appDialogInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeAppDialog(true);
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeAppDialog(false);
+    }
+  });
+  elements.editLinkDialog.addEventListener("click", (event) => {
+    if (event.target === elements.editLinkDialog) {
+      closeEditLinkDialog();
+    }
+  });
+  elements.editLinkDialog.addEventListener("keydown", (event) => {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closeEditLinkDialog();
+    }
+  });
+  elements.closeEditLinkDialogBtn.addEventListener("click", closeEditLinkDialog);
+  elements.cancelEditLinkBtn.addEventListener("click", closeEditLinkDialog);
+  elements.confirmEditLinkBtn.addEventListener("click", submitEditLinkDialog);
+
+  for (const input of [elements.editLinkTitleInput, elements.editLinkUrlInput, elements.editLinkIconInput]) {
+    input.addEventListener("input", () => {
+      elements.editLinkError.textContent = "";
+    });
+    input.addEventListener("keydown", async (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        event.stopPropagation();
+        await submitEditLinkDialog();
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        closeEditLinkDialog();
+      }
+    });
+  }
   elements.createSpaceBtn.addEventListener("click", (event) => {
     event.stopPropagation();
     toggleCreateSpaceMenu();
@@ -2870,6 +3213,11 @@ function bindEvents() {
     if (!event.target.closest(".create-space-wrap")) {
       closeCreateSpaceMenu();
     }
+
+    if (!event.target.closest(".link-card") && state.openLinkMenuId) {
+      state.openLinkMenuId = "";
+      renderGroups();
+    }
   });
 }
 
@@ -2880,6 +3228,21 @@ function bindEvents() {
  */
 function bindElements() {
   elements.appShell = getElement("appShell");
+  elements.appDialog = getElement("appDialog");
+  elements.appDialogTitle = getElement("appDialogTitle");
+  elements.appDialogMessage = getElement("appDialogMessage");
+  elements.appDialogInputWrap = getElement("appDialogInputWrap");
+  elements.appDialogInput = getElement("appDialogInput");
+  elements.appDialogCancelBtn = getElement("appDialogCancelBtn");
+  elements.appDialogConfirmBtn = getElement("appDialogConfirmBtn");
+  elements.editLinkDialog = getElement("editLinkDialog");
+  elements.editLinkTitleInput = getElement("editLinkTitleInput");
+  elements.editLinkUrlInput = getElement("editLinkUrlInput");
+  elements.editLinkIconInput = getElement("editLinkIconInput");
+  elements.editLinkError = getElement("editLinkError");
+  elements.closeEditLinkDialogBtn = getElement("closeEditLinkDialogBtn");
+  elements.cancelEditLinkBtn = getElement("cancelEditLinkBtn");
+  elements.confirmEditLinkBtn = getElement("confirmEditLinkBtn");
   elements.importFileInput = getElement("importFileInput");
   elements.encryptedBackupFileInput = getElement("encryptedBackupFileInput");
   elements.createSpaceBtn = getElement("createSpaceBtn");
@@ -2928,6 +3291,7 @@ function bindElements() {
   elements.webdavUrlInput = getElement("webdavUrlInput");
   elements.webdavUsernameInput = getElement("webdavUsernameInput");
   elements.webdavPasswordInput = getElement("webdavPasswordInput");
+  elements.webdavFilenameInput = getElement("webdavFilenameInput");
   elements.gistTokenInput = getElement("gistTokenInput");
   elements.gistIdInput = getElement("gistIdInput");
   elements.gistFilenameInput = getElement("gistFilenameInput");

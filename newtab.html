@@ -216,6 +216,11 @@
                   <label class="settings-label" for="webdavPasswordInput">WebDAV 密码</label>
                   <input id="webdavPasswordInput" class="settings-input" type="password" placeholder="应用密码或访问密码" autocomplete="current-password" />
                 </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="webdavFilenameInput">同步文件名</label>
+                  <input id="webdavFilenameInput" class="settings-input" type="text" placeholder="MyTabDesk.json" autocomplete="off" />
+                  <p class="settings-row-desc">留空时默认使用 MyTabDesk.json。仅当 URL 为目录地址时生效。</p>
+                </div>
                 <div class="settings-row settings-row-stackable">
                   <span class="settings-label">同步方式</span>
                   <div class="settings-actions settings-actions-inline">
@@ -263,6 +268,53 @@
     </aside>
   </div>
 
+  <div id="appDialog" class="modal-backdrop" hidden>
+    <section class="app-dialog" role="dialog" aria-modal="true" aria-labelledby="appDialogTitle" aria-describedby="appDialogMessage">
+      <header class="app-dialog-header">
+        <div class="app-dialog-mark" aria-hidden="true">!</div>
+        <div>
+          <h2 id="appDialogTitle">提示</h2>
+          <p id="appDialogMessage">操作提示</p>
+        </div>
+      </header>
+      <div id="appDialogInputWrap" class="app-dialog-input-wrap" hidden>
+        <input id="appDialogInput" class="create-dialog-input" type="text" autocomplete="off" />
+      </div>
+      <footer class="app-dialog-footer">
+        <button id="appDialogCancelBtn" class="secondary-button" type="button">取消</button>
+        <button id="appDialogConfirmBtn" class="primary-button" type="button">确认</button>
+      </footer>
+    </section>
+  </div>
+
+  <div id="editLinkDialog" class="modal-backdrop" hidden>
+    <section class="edit-link-dialog" role="dialog" aria-modal="true" aria-labelledby="editLinkDialogTitle">
+      <header class="create-dialog-header">
+        <h2 id="editLinkDialogTitle">编辑标签</h2>
+        <button id="closeEditLinkDialogBtn" class="icon-dialog-close" type="button" aria-label="关闭编辑标签">×</button>
+      </header>
+      <div class="edit-link-dialog-body">
+        <label class="edit-link-field" for="editLinkTitleInput">
+          <span>标题</span>
+          <input id="editLinkTitleInput" class="create-dialog-input" type="text" autocomplete="off" maxlength="120" />
+        </label>
+        <label class="edit-link-field" for="editLinkUrlInput">
+          <span>链接</span>
+          <input id="editLinkUrlInput" class="create-dialog-input" type="url" autocomplete="off" />
+        </label>
+        <label class="edit-link-field" for="editLinkIconInput">
+          <span>图标</span>
+          <input id="editLinkIconInput" class="create-dialog-input" type="url" autocomplete="off" placeholder="可留空，或填写图标地址" />
+        </label>
+        <div id="editLinkError" class="create-dialog-error" aria-live="polite"></div>
+      </div>
+      <footer class="create-dialog-footer">
+        <button id="cancelEditLinkBtn" class="secondary-button" type="button">取消</button>
+        <button id="confirmEditLinkBtn" class="primary-button" type="button">保存</button>
+      </footer>
+    </section>
+  </div>
+
   <div id="createSpaceDialog" class="modal-backdrop" hidden>
     <section class="create-dialog" role="dialog" aria-modal="true" aria-labelledby="createSpaceDialogTitle">
       <header class="create-dialog-header">
@@ -294,7 +346,7 @@
     </section>
   </div>
 
-  <script src="tabdesk-core.js?v=20260429-scope-fix"></script>
-  <script src="newtab.js?v=20260429-scope-fix"></script>
+  <script src="tabdesk-core.js?v=20260429-dialog-menu"></script>
+  <script src="newtab.js?v=20260429-dialog-menu"></script>
 </body>
 </html>
