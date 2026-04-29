@@ -1,0 +1,9 @@
+{
+  "name": "my-tab-desk",
+  "version": "2.0.0",
+  "description": "本地优先的浏览器新标签页工作台插件",
+  "private": true,
+  "scripts": {
+    "test": "node tests/tabdesk-core.test.js"
+  }
+}

@@ -1,10 +1,22 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" role="img" aria-label="MyTabDesk">
   <defs>
-    <linearGradient id="g" x1="8" y1="6" x2="40" y2="42" gradientUnits="userSpaceOnUse">
-      <stop stop-color="#2563eb"/>
-      <stop offset="1" stop-color="#38bdf8"/>
+    <linearGradient id="bg" x1="8" y1="5" x2="42" y2="44" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6366f1"/>
+      <stop offset="0.5" stop-color="#2563eb"/>
+      <stop offset="1" stop-color="#06b6d4"/>
     </linearGradient>
+    <linearGradient id="card" x1="13" y1="12" x2="36" y2="37" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#dbeafe"/>
+    </linearGradient>
+    <filter id="shadow" x="5" y="5" width="40" height="40" color-interpolation-filters="sRGB" filterUnits="userSpaceOnUse">
+      <feDropShadow dx="0" dy="4" stdDeviation="3" flood-color="#172554" flood-opacity="0.28"/>
+    </filter>
   </defs>
-  <rect width="48" height="48" rx="14" fill="url(#g)"/>
-  <path d="M13 15h22v4.4H13V15Zm0 8.4h16v4.4H13v-4.4Zm0 8.4h22v4.4H13v-4.4Z" fill="#ffffff"/>
+  <rect x="3" y="3" width="42" height="42" rx="14" fill="url(#bg)"/>
+  <path d="M12 15.5c0-2.49 2.01-4.5 4.5-4.5h17c2.49 0 4.5 2.01 4.5 4.5v17c0 2.49-2.01 4.5-4.5 4.5h-17c-2.49 0-4.5-2.01-4.5-4.5v-17Z" fill="url(#card)" filter="url(#shadow)"/>
+  <path d="M16 15.5c0-.83.67-1.5 1.5-1.5h7c.83 0 1.5.67 1.5 1.5V18H16v-2.5Zm11 0c0-.83.67-1.5 1.5-1.5h3c.83 0 1.5.67 1.5 1.5V18h-6v-2.5Z" fill="#bfdbfe"/>
+  <path d="M17 22h16v2.8H17V22Zm0 6.2h10.5V31H17v-2.8Z" fill="#2563eb"/>
+  <path d="M30 28h4.5c.83 0 1.5.67 1.5 1.5V34h-4.5c-.83 0-1.5-.67-1.5-1.5V28Z" fill="#10b981"/>
+  <path d="M9 13.2c1.15-2.65 3.2-4.83 5.74-6.14" stroke="#a5f3fc" stroke-width="2" stroke-linecap="round" opacity="0.72"/>
 </svg>

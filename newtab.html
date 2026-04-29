@@ -20,7 +20,15 @@
             <div class="brand-subtitle">标签页工作台</div>
           </div>
         </div>
-        <button id="createSpaceBtn" class="icon-button" type="button" aria-label="新建空间">+</button>
+        <div class="create-space-wrap">
+          <button id="createSpaceBtn" class="icon-button" type="button" aria-label="打开空间创建菜单">+</button>
+          <div id="createSpaceMenu" class="create-space-menu" hidden>
+            <button id="createBlankSpaceBtn" class="create-space-action" type="button"><span aria-hidden="true">➕</span>创建空间</button>
+            <button id="importSpaceBtn" class="create-space-action" type="button"><span aria-hidden="true">⬇️</span>导入空间</button>
+            <button id="importTobyBtn" class="create-space-action" type="button"><span aria-hidden="true">☁️</span>从 Toby 导入</button>
+            <button id="importBookmarksBtn" class="create-space-action" type="button"><span aria-hidden="true">🔖</span>从浏览器书签导入</button>
+          </div>
+        </div>
       </header>
 
       <section class="sidebar-section">
@@ -32,10 +40,7 @@
       </section>
 
       <footer class="sidebar-footer">
-        <button id="exportBtn" class="sidebar-footer-button" type="button">导出数据</button>
-        <button id="importBtn" class="sidebar-footer-button" type="button">导入数据</button>
         <button id="settingsBtn" class="sidebar-footer-button" type="button">设置</button>
-        <button id="clearDataBtn" class="sidebar-footer-button danger-text-button" type="button">清空数据</button>
       </footer>
     </aside>
 
@@ -77,66 +82,160 @@
       <section id="settingsView" class="settings-view" hidden>
         <header class="settings-header">
           <div>
-            <h1 class="settings-title">设置</h1>
-            <p class="settings-subtitle">同步基础版 · 管理备份与数据安全</p>
+            <h1 class="settings-title">备份与同步</h1>
+            <p class="settings-subtitle">当前数据版本：<span id="settingsVersionValue">-</span>，最后修改时间：<span id="syncLastModifiedValue">-</span></p>
           </div>
-          <button id="backToWorkspaceBtn" class="primary-button" type="button">返回工作台</button>
         </header>
+
+        <div class="settings-summary-grid" aria-label="数据概览">
+          <article class="settings-summary-card">
+            <span class="summary-icon summary-icon-space" aria-hidden="true">空</span>
+            <div>
+              <strong id="settingsSpaceCountValue">0</strong>
+              <span>空间</span>
+            </div>
+          </article>
+          <article class="settings-summary-card">
+            <span class="summary-icon summary-icon-group" aria-hidden="true">组</span>
+            <div>
+              <strong id="settingsGroupCountValue">0</strong>
+              <span>分组</span>
+            </div>
+          </article>
+          <article class="settings-summary-card">
+            <span class="summary-icon summary-icon-link" aria-hidden="true">签</span>
+            <div>
+              <strong id="settingsLinkCountValue">0</strong>
+              <span>标签</span>
+            </div>
+          </article>
+        </div>
+
+        <div class="settings-status-line" aria-label="同步状态">
+          <span>同步模式：<strong id="syncModeValue">手动同步基础版</strong></span>
+          <span>设备标识：<strong id="syncDeviceIdValue">-</strong></span>
+          <span>最近备份：<strong id="syncLastBackupValue">从未备份</strong></span>
+          <span>最近导入：<strong id="syncLastImportValue">从未导入</strong></span>
+          <span>自动同步：<strong id="syncAutoStatusValue">未启用</strong></span>
+        </div>
 
         <div class="settings-body">
           <section class="settings-section">
-            <h2 class="settings-section-title">同步状态</h2>
-            <div class="settings-card">
-              <div class="settings-row">
-                <span class="settings-label">同步模式</span>
-                <span class="settings-value" id="syncModeValue">手动同步基础版</span>
+            <h2 class="settings-section-title">离线同步</h2>
+            <div class="settings-card settings-offline-card">
+              <div class="settings-row settings-row-stackable">
+                <div>
+                  <span class="settings-label">普通数据备份</span>
+                  <p class="settings-row-desc">导出或导入标准 JSON 数据文件，适合本地迁移和手动备份。</p>
+                </div>
+                <div class="settings-actions settings-actions-inline">
+                  <button id="offlineExportBtn" class="primary-button" type="button">导出数据</button>
+                  <button id="offlineImportBtn" class="secondary-button" type="button">导入数据</button>
+                </div>
               </div>
               <div class="settings-row">
-                <span class="settings-label">设备标识</span>
-                <span class="settings-value" id="syncDeviceIdValue">-</span>
-              </div>
-              <div class="settings-row">
-                <span class="settings-label">最近修改</span>
-                <span class="settings-value" id="syncLastModifiedValue">-</span>
-              </div>
-              <div class="settings-row">
-                <span class="settings-label">最近备份</span>
-                <span class="settings-value" id="syncLastBackupValue">从未备份</span>
-              </div>
-              <div class="settings-row">
-                <span class="settings-label">最近导入</span>
-                <span class="settings-value" id="syncLastImportValue">从未导入</span>
-              </div>
-            </div>
-          </section>
-
-          <section class="settings-section">
-            <h2 class="settings-section-title">加密备份</h2>
-            <div class="settings-card">
-              <div class="settings-row">
-                <label class="settings-label" for="backupPasswordInput">备份密码</label>
+                <label class="settings-label" for="backupPasswordInput">加密备份密码</label>
                 <input id="backupPasswordInput" class="settings-input" type="password" placeholder="输入加密密码" autocomplete="off" />
               </div>
-              <div class="settings-actions">
-                <button id="exportEncryptedBtn" class="primary-button" type="button">导出加密备份</button>
+              <div class="settings-actions settings-actions-right">
+                <button id="exportEncryptedBtn" class="secondary-button" type="button">导出加密备份</button>
                 <button id="importEncryptedBtn" class="secondary-button" type="button">导入加密备份</button>
               </div>
-              <p class="settings-hint">导出的备份文件将使用密码加密，导入时需要输入相同密码才能恢复数据。请妥善保管密码，忘记密码将无法恢复数据。</p>
+              <p class="settings-hint">加密备份使用 AES-GCM 保护数据，导入时需要输入相同密码。请妥善保管密码，忘记密码将无法恢复数据。</p>
             </div>
           </section>
 
           <section class="settings-section">
-            <h2 class="settings-section-title">云端同步（后续版本开放）</h2>
-            <div class="settings-card">
-              <div class="settings-row">
-                <span class="settings-label">WebDAV 同步</span>
-                <span class="settings-value settings-value-muted">后续版本开放</span>
-              </div>
-              <div class="settings-row">
-                <span class="settings-label">GitHub Gist 同步</span>
-                <span class="settings-value settings-value-muted">后续版本开放</span>
-              </div>
+            <div class="settings-section-head">
+              <h2 class="settings-section-title">远程同步</h2>
+              <button id="saveSyncSettingsBtn" class="secondary-button" type="button">保存同步配置</button>
             </div>
+            <div class="sync-card-list">
+              <article class="settings-card sync-provider-card">
+                <header class="sync-provider-header">
+                  <div>
+                    <div class="sync-provider-title">GitHub Gist 同步 <span class="settings-badge">Beta</span></div>
+                    <p class="settings-row-desc">使用私有 Gist 保存同步文件，适合多设备手动同步。</p>
+                  </div>
+                  <label class="settings-switch" for="gistSyncSwitch" aria-label="启用 GitHub Gist 同步">
+                    <input id="gistSyncSwitch" type="checkbox" />
+                    <span></span>
+                  </label>
+                </header>
+                <div class="settings-row">
+                  <label class="settings-label" for="gistTokenInput">GitHub Token</label>
+                  <input id="gistTokenInput" class="settings-input" type="password" placeholder="GitHub Personal Access Token" autocomplete="off" />
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="gistIdInput">Gist ID</label>
+                  <input id="gistIdInput" class="settings-input" type="text" placeholder="留空时上传会自动创建" autocomplete="off" />
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="gistFilenameInput">Gist 文件名</label>
+                  <input id="gistFilenameInput" class="settings-input" type="text" placeholder="mytabdesk-sync.json" autocomplete="off" />
+                </div>
+                <div class="settings-row settings-row-stackable">
+                  <span class="settings-label">同步方式</span>
+                  <div class="settings-actions settings-actions-inline">
+                    <button id="gistUploadSyncBtn" class="secondary-button" type="button">本地推送到远程</button>
+                    <button id="gistDownloadSyncBtn" class="secondary-button" type="button">远程覆盖本地</button>
+                  </div>
+                </div>
+                <div class="settings-row">
+                  <div>
+                    <span class="settings-label">自动同步</span>
+                    <p class="settings-row-desc">本地工作台数据发生变动后，会自动推送到当前 Gist。</p>
+                  </div>
+                  <label class="settings-switch" for="gistAutoSyncSwitch" aria-label="启用 GitHub Gist 自动同步">
+                    <input id="gistAutoSyncSwitch" type="checkbox" />
+                    <span></span>
+                  </label>
+                </div>
+              </article>
+
+              <article class="settings-card sync-provider-card">
+                <header class="sync-provider-header">
+                  <div>
+                    <div class="sync-provider-title">WebDAV 同步 <span class="settings-badge">Beta</span></div>
+                    <p class="settings-row-desc">支持 Nextcloud、坚果云等 WebDAV 服务。</p>
+                  </div>
+                  <label class="settings-switch" for="webdavSyncSwitch" aria-label="启用 WebDAV 同步">
+                    <input id="webdavSyncSwitch" type="checkbox" />
+                    <span></span>
+                  </label>
+                </header>
+                <div class="settings-row">
+                  <label class="settings-label" for="webdavUrlInput">WebDAV URL</label>
+                  <input id="webdavUrlInput" class="settings-input" type="url" placeholder="https://example.com/remote.php/dav/files/user/mytabdesk-sync.json" autocomplete="off" />
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="webdavUsernameInput">WebDAV 用户名</label>
+                  <input id="webdavUsernameInput" class="settings-input" type="text" placeholder="用户名" autocomplete="username" />
+                </div>
+                <div class="settings-row">
+                  <label class="settings-label" for="webdavPasswordInput">WebDAV 密码</label>
+                  <input id="webdavPasswordInput" class="settings-input" type="password" placeholder="应用密码或访问密码" autocomplete="current-password" />
+                </div>
+                <div class="settings-row settings-row-stackable">
+                  <span class="settings-label">同步方式</span>
+                  <div class="settings-actions settings-actions-inline">
+                    <button id="webdavUploadSyncBtn" class="secondary-button" type="button">本地推送到远程</button>
+                    <button id="webdavDownloadSyncBtn" class="secondary-button" type="button">远程覆盖本地</button>
+                  </div>
+                </div>
+                <div class="settings-row">
+                  <div>
+                    <span class="settings-label">自动同步</span>
+                    <p class="settings-row-desc">本地工作台数据发生变动后，会自动推送到当前 WebDAV 文件。</p>
+                  </div>
+                  <label class="settings-switch" for="webdavAutoSyncSwitch" aria-label="启用 WebDAV 自动同步">
+                    <input id="webdavAutoSyncSwitch" type="checkbox" />
+                    <span></span>
+                  </label>
+                </div>
+              </article>
+            </div>
+            <p class="settings-hint">同步配置仅保存在浏览器本地。请使用专用应用密码或最小权限 Token，不要把密码或 Token 写入代码仓库。</p>
           </section>
         </div>
       </section>
@@ -149,6 +248,11 @@
           <div class="tabs-subtitle">当前窗口</div>
         </div>
 
+        <label class="tab-search-box" for="tabSearchInput">
+          <span aria-hidden="true">⌕</span>
+          <input id="tabSearchInput" class="tab-search-input" type="search" placeholder="搜索当前标签" autocomplete="off" />
+        </label>
+
         <div class="tabs-actions">
           <button id="refreshTabsBtn" class="icon-button text-icon-button" type="button" aria-label="刷新当前窗口标签页">刷新</button>
           <button id="saveCurrentTabsBtn" class="primary-button" type="button">保存</button>
@@ -159,7 +263,38 @@
     </aside>
   </div>
 
-  <script src="tabdesk-core.js"></script>
-  <script src="newtab.js"></script>
+  <div id="createSpaceDialog" class="modal-backdrop" hidden>
+    <section class="create-dialog" role="dialog" aria-modal="true" aria-labelledby="createSpaceDialogTitle">
+      <header class="create-dialog-header">
+        <h2 id="createSpaceDialogTitle">创建新空间</h2>
+        <button id="closeCreateSpaceDialogBtn" class="icon-dialog-close" type="button" aria-label="关闭创建空间">×</button>
+      </header>
+      <div class="create-dialog-body">
+        <input id="createSpaceNameInput" class="create-dialog-input" type="text" autocomplete="off" maxlength="32" aria-label="空间名称" />
+        <div id="createSpaceError" class="create-dialog-error" aria-live="polite"></div>
+      </div>
+      <footer class="create-dialog-footer">
+        <button id="cancelCreateSpaceBtn" class="secondary-button" type="button">取消</button>
+        <button id="confirmCreateSpaceBtn" class="primary-button" type="button">确认</button>
+      </footer>
+    </section>
+  </div>
+
+  <div id="spaceIconDialog" class="modal-backdrop" hidden>
+    <section class="icon-dialog" role="dialog" aria-modal="true" aria-labelledby="spaceIconDialogTitle">
+      <header class="icon-dialog-header">
+        <h2 id="spaceIconDialogTitle">选择图标</h2>
+        <button id="closeSpaceIconDialogBtn" class="icon-dialog-close" type="button" aria-label="关闭图标选择">×</button>
+      </header>
+      <div id="spaceIconGrid" class="space-icon-grid" aria-label="空间图标列表"></div>
+      <footer class="icon-dialog-footer">
+        <button id="cancelSpaceIconBtn" class="secondary-button" type="button">取消</button>
+        <button id="confirmSpaceIconBtn" class="primary-button" type="button">确认</button>
+      </footer>
+    </section>
+  </div>
+
+  <script src="tabdesk-core.js?v=20260429-scope-fix"></script>
+  <script src="newtab.js?v=20260429-scope-fix"></script>
 </body>
 </html>

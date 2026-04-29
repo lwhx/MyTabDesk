@@ -18,14 +18,18 @@ const {
   filterValidTabs,
   tabsToLinks,
   filterGroups,
+  filterCurrentTabs,
   createDeviceId,
   ensureSyncSettings,
   getDataUpdatedAt,
+  mergeWorkspaceData,
   createEncryptedBackup,
   restoreEncryptedBackup,
+  xorEncrypt,
   detectImportConflict,
   exportData,
   importData,
+  createBackupSafeData,
   moveArrayItem,
   reorderSpaces,
   reorderGroups,
@@ -199,6 +203,29 @@ function testFilterGroups() {
 }
 
 /**
+ * 测试当前标签页搜索会按标题和 URL 过滤。
+ *
+ * @returns {void}
+ */
+function testFilterCurrentTabs() {
+  /** 匹配后的标签页。 */
+  const tabs = filterCurrentTabs([
+    {
+      title: "Example",
+      url: "https://example.com"
+    },
+    {
+      title: "Docs",
+      url: "https://docs.example.com"
+    }
+  ], "docs");
+
+  assert.equal(tabs.length, 1);
+  assert.equal(tabs[0].title, "Docs");
+  assert.deepEqual(filterCurrentTabs(null, "docs"), []);
+}
+
+/**
  * 测试设备 ID 会带有设备前缀。
  *
  * @returns {void}
@@ -226,6 +253,46 @@ function testEnsureSyncSettingsAddsDefaults() {
   assert.equal(nextData.settings.sync.mode, "manual");
   assert.equal(nextData.settings.sync.lastBackupAt, 0);
   assert.equal(nextData.settings.sync.lastImportAt, 0);
+  assert.equal(nextData.settings.sync.webdavAutoSyncEnabled, false);
+  assert.equal(nextData.settings.sync.gistAutoSyncEnabled, false);
+  assert.equal(nextData.settings.sync.autoSyncPendingAt, 0);
+  assert.equal(nextData.settings.sync.lastAutoSyncAt, 0);
+  assert.equal(nextData.settings.sync.lastAutoSyncError, "");
+}
+
+/**
+ * 测试同步设置会保留自动同步开关。
+ *
+ * @returns {void}
+ */
+function testEnsureSyncSettingsKeepsAutoSyncOptions() {
+  /** 补齐同步设置后的工作台数据。 */
+  const nextData = ensureSyncSettings({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A",
+        groups: []
+      }
+    ],
+    settings: {
+      sync: {
+        webdavAutoSyncEnabled: true,
+        gistAutoSyncEnabled: true,
+        autoSyncPendingAt: 100,
+        lastAutoSyncAt: 90,
+        lastAutoSyncError: "网络异常"
+      }
+    }
+  }, "device-fixed");
+
+  assert.equal(nextData.settings.sync.webdavAutoSyncEnabled, true);
+  assert.equal(nextData.settings.sync.gistAutoSyncEnabled, true);
+  assert.equal(nextData.settings.sync.autoSyncPendingAt, 100);
+  assert.equal(nextData.settings.sync.lastAutoSyncAt, 90);
+  assert.equal(nextData.settings.sync.lastAutoSyncError, "网络异常");
 }
 
 /**
@@ -304,13 +371,54 @@ async function testEncryptedBackupRoundTrip() {
 
   assert.equal(backupData.backupVersion, 1);
   assert.equal(backupData.appVersion, "2.0.0");
+  assert.equal(backupData.encrypted, true);
+  assert.equal(backupData.encryption, "PBKDF2-SHA256-AES-GCM");
   assert.equal(backupData.deviceId, "device-fixed");
   assert.equal(typeof backupData.exportedAt, "number");
+  assert.equal(typeof backupData.iterations, "number");
+  assert.equal(typeof backupData.salt, "string");
+  assert.equal(typeof backupData.iv, "string");
   assert.equal(backupText.includes("https://example.com"), false);
 
   /** 恢复后的工作台数据。 */
   const restoredData = await restoreEncryptedBackup(backupText, "secret");
   assert.equal(restoredData.spaces[0].groups[0].links[0].url, "https://example.com");
+}
+
+/**
+ * 测试旧版 XOR 加密备份仍然可以导入。
+ *
+ * @returns {Promise<void>} 测试完成后结束。
+ */
+async function testRestoreEncryptedBackupReadsLegacyXorBackup() {
+  /** 旧版明文数据。 */
+  const legacyData = JSON.stringify({
+    version: 1,
+    activeSpaceId: "space-legacy",
+    spaces: [
+      {
+        id: "space-legacy",
+        name: "旧版空间",
+        groups: []
+      }
+    ],
+    settings: {}
+  });
+  /** 旧版 XOR 加密密文。 */
+  const payload = await xorEncrypt(legacyData, "secret");
+  /** 旧版备份文本。 */
+  const backupText = JSON.stringify({
+    backupVersion: 1,
+    appVersion: "2.0.0",
+    exportedAt: 1000,
+    deviceId: "device-legacy",
+    payload
+  });
+  /** 从旧版备份恢复的数据。 */
+  const restoredData = await restoreEncryptedBackup(backupText, "secret");
+
+  assert.equal(restoredData.activeSpaceId, "space-legacy");
+  assert.equal(restoredData.spaces[0].name, "旧版空间");
 }
 
 /**
@@ -378,12 +486,44 @@ function testDetectImportConflictFlagsOlderAndDifferentDevice() {
 function testExportDataAddsVersionAndTimestamp() {
   /** 导出的 JSON 文本。 */
   const exportedText = exportData(createDefaultData());
-  /** 解析后的导出数据。 */
-  const exportedData = JSON.parse(exportedText);
+  /** 解析后的导出备份包。 */
+  const exportedPackage = JSON.parse(exportedText);
 
-  assert.equal(exportedData.version, 1);
-  assert.equal(typeof exportedData.exportedAt, "number");
-  assert.equal(exportedData.spaces.length, 1);
+  assert.equal(exportedPackage.backupVersion, 1);
+  assert.equal(exportedPackage.appVersion, "2.0.0");
+  assert.equal(typeof exportedPackage.exportedAt, "number");
+  assert.equal(exportedPackage.deviceId.startsWith("device-"), true);
+  assert.equal(exportedPackage.data.version, 1);
+  assert.equal(exportedPackage.data.spaces.length, 1);
+}
+
+/**
+ * 测试备份数据会移除同步敏感凭据。
+ *
+ * @returns {void}
+ */
+function testCreateBackupSafeDataRemovesSecrets() {
+  /** 去除敏感配置后的备份数据。 */
+  const data = createBackupSafeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A",
+        groups: []
+      }
+    ],
+    settings: {
+      sync: {
+        webdavPassword: "secret-webdav",
+        gistToken: "secret-gist"
+      }
+    }
+  });
+
+  assert.equal(data.settings.sync.webdavPassword, "");
+  assert.equal(data.settings.sync.gistToken, "");
 }
 
 /**
@@ -395,6 +535,36 @@ function testImportDataRejectsInvalidText() {
   assert.throws(() => {
     importData("not-json");
   }, /导入文件不是有效的 JSON/);
+}
+
+/**
+ * 测试导入新格式普通备份包会读取 data 字段。
+ *
+ * @returns {void}
+ */
+function testImportDataReadsPackagedBackup() {
+  /** 新格式备份包导入后的标准化数据。 */
+  const importedData = importData(JSON.stringify({
+    backupVersion: 1,
+    appVersion: "2.0.0",
+    exportedAt: 1000,
+    deviceId: "device-fixed",
+    data: {
+      version: 1,
+      activeSpaceId: "space-a",
+      spaces: [
+        {
+          id: "space-a",
+          name: "空间 A",
+          groups: []
+        }
+      ],
+      settings: {}
+    }
+  }));
+
+  assert.equal(importedData.activeSpaceId, "space-a");
+  assert.equal(importedData.spaces[0].name, "空间 A");
 }
 
 /**
@@ -703,6 +873,168 @@ function testAddLinksToGroupDedupesByUrl() {
 }
 
 /**
+ * 测试自动合并会保留本地和远端各自新增的数据。
+ *
+ * @returns {void}
+ */
+function testMergeWorkspaceDataKeepsBothSidesNewItems() {
+  /** 本地工作台数据。 */
+  const localData = normalizeData({
+    version: 1,
+    activeSpaceId: "space-local",
+    spaces: [
+      {
+        id: "space-local",
+        name: "本地空间",
+        updatedAt: 200,
+        groups: [
+          {
+            id: "group-local",
+            name: "本地分组",
+            updatedAt: 200,
+            links: [
+              {
+                id: "link-local",
+                title: "本地链接",
+                url: "https://local.example.com",
+                createdAt: 200
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    settings: {
+      sync: {
+        deviceId: "device-local",
+        provider: "webdav",
+        webdavAutoSyncEnabled: true
+      }
+    }
+  });
+  /** 远端工作台数据。 */
+  const remoteData = normalizeData({
+    version: 1,
+    activeSpaceId: "space-remote",
+    spaces: [
+      {
+        id: "space-remote",
+        name: "远端空间",
+        updatedAt: 300,
+        groups: [
+          {
+            id: "group-remote",
+            name: "远端分组",
+            updatedAt: 300,
+            links: [
+              {
+                id: "link-remote",
+                title: "远端链接",
+                url: "https://remote.example.com",
+                createdAt: 300
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    settings: {
+      sync: {
+        deviceId: "device-remote"
+      }
+    }
+  });
+  /** 自动合并后的工作台数据。 */
+  const mergedData = mergeWorkspaceData(localData, remoteData, "device-local");
+
+  assert.deepEqual(mergedData.spaces.map((space) => space.id), ["space-local", "space-remote"]);
+  assert.equal(mergedData.settings.sync.deviceId, "device-local");
+  assert.equal(mergedData.settings.sync.provider, "webdav");
+}
+
+/**
+ * 测试自动合并同一分组时会按 URL 去重并保留两端链接。
+ *
+ * @returns {void}
+ */
+function testMergeWorkspaceDataMergesLinksWithoutPrompt() {
+  /** 本地工作台数据。 */
+  const localData = normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A",
+        updatedAt: 100,
+        groups: [
+          {
+            id: "group-a",
+            name: "分组 A",
+            updatedAt: 100,
+            links: [
+              {
+                id: "link-a",
+                title: "本地标题",
+                url: "https://same.example.com",
+                createdAt: 100
+              },
+              {
+                id: "link-local",
+                title: "本地新增",
+                url: "https://local.example.com",
+                createdAt: 110
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    settings: {}
+  });
+  /** 远端工作台数据。 */
+  const remoteData = normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A 远端",
+        updatedAt: 300,
+        groups: [
+          {
+            id: "group-a",
+            name: "分组 A 远端",
+            updatedAt: 300,
+            links: [
+              {
+                id: "link-remote-duplicate",
+                title: "远端标题",
+                url: "https://same.example.com",
+                createdAt: 300
+              },
+              {
+                id: "link-remote",
+                title: "远端新增",
+                url: "https://remote.example.com",
+                createdAt: 310
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    settings: {}
+  });
+  /** 自动合并后的链接列表。 */
+  const links = mergeWorkspaceData(localData, remoteData, "device-local").spaces[0].groups[0].links;
+
+  assert.equal(links.length, 3);
+  assert.deepEqual(links.map((link) => link.url), ["https://local.example.com", "https://same.example.com", "https://remote.example.com"]);
+  assert.equal(links.find((link) => link.url === "https://same.example.com").title, "远端标题");
+}
+
+/**
  * 测试清空数据会返回默认工作台数据。
  *
  * @returns {void}
@@ -728,14 +1060,19 @@ async function runTests() {
   testTabsToLinksFiltersAndDedupes();
   testFilterValidTabsRejectsNonArray();
   testFilterGroups();
+  testFilterCurrentTabs();
   testCreateDeviceIdUsesDevicePrefix();
   testEnsureSyncSettingsAddsDefaults();
+  testEnsureSyncSettingsKeepsAutoSyncOptions();
   testGetDataUpdatedAtReturnsLatestTimestamp();
   await testEncryptedBackupRoundTrip();
+  await testRestoreEncryptedBackupReadsLegacyXorBackup();
   await testRestoreEncryptedBackupRejectsWrongPassword();
   testDetectImportConflictFlagsOlderAndDifferentDevice();
   testExportDataAddsVersionAndTimestamp();
+  testCreateBackupSafeDataRemovesSecrets();
   testImportDataRejectsInvalidText();
+  testImportDataReadsPackagedBackup();
   testImportDataNormalizesData();
   testMoveArrayItemReordersArray();
   testReorderSpacesMovesTargetSpace();
@@ -744,6 +1081,8 @@ async function runTests() {
   testMoveLinkBetweenGroupsInsertsBeforeTargetLink();
   testMoveLinkBetweenGroupsAppendsWhenNoTargetLink();
   testAddLinksToGroupDedupesByUrl();
+  testMergeWorkspaceDataKeepsBothSidesNewItems();
+  testMergeWorkspaceDataMergesLinksWithoutPrompt();
   testClearAllDataReturnsDefaultData();
   console.log("所有核心逻辑测试通过");
 }

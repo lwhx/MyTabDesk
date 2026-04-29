@@ -1,3 +1,35 @@
+(function () {
+const {
+  STORAGE_KEY,
+  APP_VERSION,
+  BACKUP_VERSION,
+  createDefaultData,
+  normalizeData,
+  migrateData,
+  createId,
+  ensureSyncSettings,
+  getDataUpdatedAt,
+  mergeWorkspaceData,
+  createEncryptedBackup,
+  restoreEncryptedBackup,
+  detectImportConflict,
+  isValidTabUrl,
+  dedupeTabsByUrl,
+  filterValidTabs,
+  tabsToLinks,
+  filterGroups,
+  filterCurrentTabs,
+  exportData,
+  importData,
+  createBackupSafeData,
+  reorderSpaces,
+  reorderGroups,
+  reorderLinks,
+  moveLinkBetweenGroups,
+  addLinksToGroup,
+  clearAllData
+} = globalThis.MyTabDeskCore;
+
 /**
  * 页面运行时状态，集中保存数据、搜索词、批量选择和拖拽中的对象。
  */
@@ -8,6 +40,8 @@ const state = {
   currentTabs: [],
   /** 当前主区域搜索关键词。 */
   searchKeyword: "",
+  /** 当前标签栏搜索关键词。 */
+  tabSearchKeyword: "",
   /** 是否处于批量删除模式。 */
   batchDeleteEnabled: false,
   /** 批量删除模式中已选中的链接 ID 集合。 */
@@ -16,10 +50,34 @@ const state = {
   draggedSpaceId: "",
   /** 正在拖拽的分组 ID。 */
   draggedGroupId: "",
+  /** 正在编辑名称的分组 ID。 */
+  editingGroupId: "",
+  /** 正在显示移动空间菜单的分组 ID。 */
+  movingGroupId: "",
   /** 正在拖拽的链接信息。 */
   draggedLink: null,
   /** 正在从右栏拖拽的浏览器标签页。 */
   draggedTab: null,
+  /** 自动同步防抖定时器 ID。 */
+  autoSyncTimerId: 0,
+  /** 是否正在执行自动同步。 */
+  autoSyncRunning: false,
+  /** 最近一次已保存的工作台数据快照。 */
+  lastWorkspaceSnapshot: "",
+  /** 正在显示菜单的空间 ID。 */
+  openSpaceMenuId: "",
+  /** 是否正在显示创建空间方式菜单。 */
+  createSpaceMenuOpen: false,
+  /** 当前文件导入模式：data 表示全量数据，space 表示单空间。 */
+  importMode: "data",
+  /** 是否正在显示创建空间弹窗。 */
+  createSpaceDialogOpen: false,
+  /** 创建空间弹窗错误提示文本。 */
+  createSpaceDialogError: "",
+  /** 正在更改图标的空间 ID。 */
+  iconPickerSpaceId: "",
+  /** 图标选择弹窗中当前选中的图标。 */
+  selectedSpaceIcon: "",
   /** 当前页面视图模式：workspace 表示工作台，settings 表示设置页。 */
   viewMode: "workspace"
 };
@@ -28,6 +86,35 @@ const state = {
  * 页面 DOM 元素引用集合，初始化后由各渲染和事件函数复用。
  */
 const elements = {};
+
+/**
+ * 可供空间使用的彩色图标集合，使用开源 Emoji 图标风格保证浏览器插件离线可用。
+ */
+const SPACE_ICON_OPTIONS = [
+  "📁", "⭐", "💼", "📌", "🧭", "🚀", "🧠", "💡", "📚", "📝",
+  "🔖", "🗂️", "🧰", "⚙️", "🖥️", "🖱️", "⌨️", "🌐", "🔗", "🧪",
+  "🎯", "📊", "📈", "📦", "🛠️", "🔐", "☁️", "🔥", "🌈", "🍀",
+  "🏠", "🏢", "🛒", "💰", "🎨", "🎵", "🎬", "📷", "🕒", "✅"
+];
+
+/**
+ * 默认空间图标。
+ */
+const UI_DEFAULT_SPACE_ICON = "📁";
+
+/**
+ * 获取空间显示图标，兼容旧版本保存的英文图标值。
+ *
+ * @param {string} iconValue 空间保存的图标值。
+ * @returns {string} 用于界面展示的彩色图标。
+ */
+function getDisplaySpaceIcon(iconValue) {
+  if (!iconValue || iconValue === "folder") {
+    return UI_DEFAULT_SPACE_ICON;
+  }
+
+  return iconValue;
+}
 
 /**
  * 根据 ID 获取页面元素。
@@ -58,6 +145,71 @@ function hasChromeTabs() {
 }
 
 /**
+ * 获取当前同步设置对象。
+ *
+ * @returns {object|null} 当前同步配置，未初始化时返回 null。
+ */
+function getSyncSettings() {
+  return state.data && state.data.settings ? state.data.settings.sync : null;
+}
+
+/**
+ * 判断当前同步服务商是否启用自动上传。
+ *
+ * @param {object} sync 当前同步配置。
+ * @returns {boolean} 自动上传可用时返回 true。
+ */
+function isAutoSyncEnabled(sync) {
+  if (!sync) {
+    return false;
+  }
+
+  return sync.provider === "webdav" && sync.webdavAutoSyncEnabled || sync.provider === "gist" && sync.gistAutoSyncEnabled;
+}
+
+/**
+ * 判断当前保存是否应该标记为待自动同步。
+ *
+ * @param {object} options 保存选项。
+ * @returns {boolean} 需要标记自动同步时返回 true。
+ */
+function shouldMarkAutoSyncPending(options) {
+  return !(options && options.skipAutoSync);
+}
+
+/**
+ * 创建只包含工作台业务数据的快照文本。
+ *
+ * @returns {string} 工作台业务数据快照。
+ */
+function createWorkspaceSnapshot() {
+  if (!state.data) {
+    return "";
+  }
+
+  return JSON.stringify({
+    spaces: state.data.spaces
+  });
+}
+
+/**
+ * 判断本地工作台业务数据是否发生变化。
+ *
+ * @returns {boolean} 数据发生变化时返回 true。
+ */
+function hasWorkspaceDataChanged() {
+  /** 当前工作台业务数据快照。 */
+  const snapshot = createWorkspaceSnapshot();
+
+  if (snapshot === state.lastWorkspaceSnapshot) {
+    return false;
+  }
+
+  state.lastWorkspaceSnapshot = snapshot;
+  return true;
+}
+
+/**
  * 从本地存储读取工作台数据。
  *
  * @returns {Promise<object>} 迁移并标准化后的工作台数据。
@@ -80,9 +232,27 @@ async function loadData() {
 /**
  * 保存当前工作台数据到本地存储。
  *
+ * @param {object} options 保存选项。
  * @returns {Promise<void>} 保存完成后结束。
  */
-async function saveData() {
+async function saveData(options = {}) {
+  /** 本次保存是否需要尝试标记自动同步。 */
+  const shouldCheckAutoSync = shouldMarkAutoSyncPending(options);
+  /** 本次保存是否存在工作台业务数据变化。 */
+  const workspaceChanged = shouldCheckAutoSync && hasWorkspaceDataChanged();
+
+  if (workspaceChanged) {
+    /** 当前同步配置。 */
+    const sync = getSyncSettings();
+
+    if (isAutoSyncEnabled(sync)) {
+      /** 当前时间戳。 */
+      const now = getCurrentTime();
+      sync.autoSyncPendingAt = now;
+      sync.lastAutoSyncError = "";
+    }
+  }
+
   if (!hasChromeStorage()) {
     return;
   }
@@ -93,6 +263,10 @@ async function saveData() {
     });
   } catch (error) {
     alert("数据保存失败，请稍后重试。");
+  }
+
+  if (workspaceChanged) {
+    scheduleAutoSync();
   }
 }
 
@@ -144,6 +318,27 @@ function getTotalLinks(space) {
   }
 
   return space.groups.reduce((total, group) => total + group.links.length, 0);
+}
+
+/**
+ * 统计全部工作台数据的空间、分组和链接数量。
+ *
+ * @param {object} data 工作台全量数据。
+ * @returns {object} 统计结果对象。
+ */
+function getDataSummary(data) {
+  /** 全部空间列表。 */
+  const spaces = data && Array.isArray(data.spaces) ? data.spaces : [];
+  /** 全部分组数量。 */
+  const groupCount = spaces.reduce((total, space) => total + (Array.isArray(space.groups) ? space.groups.length : 0), 0);
+  /** 全部链接数量。 */
+  const linkCount = spaces.reduce((total, space) => total + getTotalLinks(space), 0);
+
+  return {
+    spaceCount: spaces.length,
+    groupCount,
+    linkCount
+  };
 }
 
 /**
@@ -213,6 +408,7 @@ function applyLayoutSettings() {
   document.body.dataset.theme = settings.theme === "dark" ? "dark" : "light";
   elements.appShell.classList.toggle("sidebar-collapsed", Boolean(settings.sidebarCollapsed));
   elements.appShell.classList.toggle("tabs-panel-collapsed", Boolean(settings.rightPanelCollapsed));
+  elements.appShell.classList.toggle("settings-mode", state.viewMode === "settings");
   elements.toggleThemeBtn.textContent = settings.theme === "dark" ? "浅色模式" : "深色模式";
   elements.toggleSidebarBtn.textContent = settings.sidebarCollapsed ? "展开" : "收起";
   elements.toggleTabsPanelBtn.textContent = settings.rightPanelCollapsed ? "展开右栏" : "收起右栏";
@@ -221,6 +417,7 @@ function applyLayoutSettings() {
 
   /** 是否正在显示设置页。 */
   const isSettings = state.viewMode === "settings";
+  elements.createSpaceMenu.hidden = !state.createSpaceMenuOpen;
   elements.workspaceToolbar.hidden = isSettings;
   elements.batchBar.hidden = isSettings || !state.batchDeleteEnabled;
   elements.groupList.hidden = isSettings;
@@ -236,12 +433,14 @@ function applyLayoutSettings() {
 function renderAll() {
   applyLayoutSettings();
   renderSpaces();
-  renderActiveSpaceHeader();
-  renderGroups();
 
   if (state.viewMode === "settings") {
     renderSettingsStatus();
+    return;
   }
+
+  renderActiveSpaceHeader();
+  renderGroups();
 }
 
 /**
@@ -265,17 +464,29 @@ function renderSpaces() {
       item.classList.add("active");
     }
 
+    /** 空间图标元素。 */
+    const icon = createTextElement("span", "space-icon", getDisplaySpaceIcon(space.icon));
     /** 空间名称元素。 */
     const name = createTextElement("span", "space-name", space.name);
-    /** 空间删除按钮。 */
-    const deleteButton = document.createElement("button");
-    deleteButton.type = "button";
-    deleteButton.className = "space-delete-button";
-    deleteButton.textContent = "×";
-    deleteButton.setAttribute("aria-label", `删除空间 ${space.name}`);
+    /** 空间主体内容元素。 */
+    const content = document.createElement("span");
+    content.className = "space-content";
+    content.append(icon, name);
+    /** 空间拖拽手柄。 */
+    const dragHandle = createTextElement("span", "space-drag-handle", "⠿");
+    dragHandle.setAttribute("aria-hidden", "true");
+    /** 空间更多操作按钮。 */
+    const menuButton = document.createElement("button");
+    menuButton.type = "button";
+    menuButton.className = "space-menu-button";
+    menuButton.textContent = "…";
+    menuButton.setAttribute("aria-label", `打开空间 ${space.name} 的更多操作`);
 
     item.addEventListener("click", async () => {
       state.data.activeSpaceId = space.id;
+      state.viewMode = "workspace";
+      state.openSpaceMenuId = "";
+      state.createSpaceMenuOpen = false;
       await saveData();
       renderAll();
     });
@@ -300,14 +511,150 @@ function renderSpaces() {
       await handleSpaceDrop(space.id);
     });
 
-    deleteButton.addEventListener("click", async (event) => {
+    menuButton.addEventListener("click", (event) => {
       event.stopPropagation();
-      await deleteSpace(space.id);
+      state.openSpaceMenuId = state.openSpaceMenuId === space.id ? "" : space.id;
+      renderSpaces();
     });
 
-    item.append(name, deleteButton);
+    item.append(content, dragHandle, menuButton);
     elements.spaceList.appendChild(item);
+
+    if (state.openSpaceMenuId === space.id) {
+      elements.spaceList.appendChild(createSpaceMenuElement(space));
+    }
   }
+}
+
+/**
+ * 创建空间更多操作菜单元素。
+ *
+ * @param {object} space 空间数据。
+ * @returns {HTMLElement} 空间菜单元素。
+ */
+function createSpaceMenuElement(space) {
+  /** 空间菜单容器。 */
+  const menu = document.createElement("div");
+  menu.className = "space-menu-panel";
+
+  /** 更改图标菜单项。 */
+  const changeIconButton = createSpaceMenuButton("更改图标");
+  /** 导出空间菜单项。 */
+  const exportButton = createSpaceMenuButton("导出空间");
+  /** 删除空间菜单项。 */
+  const deleteButton = createSpaceMenuButton("删除空间", true);
+
+  changeIconButton.addEventListener("click", () => openSpaceIconPicker(space.id));
+  exportButton.addEventListener("click", () => exportSpace(space.id));
+  deleteButton.addEventListener("click", () => deleteSpace(space.id));
+
+  menu.append(changeIconButton, exportButton, deleteButton);
+  return menu;
+}
+
+/**
+ * 创建空间菜单按钮。
+ *
+ * @param {string} text 按钮文本。
+ * @param {boolean} danger 是否为危险操作。
+ * @returns {HTMLButtonElement} 菜单按钮元素。
+ */
+function createSpaceMenuButton(text, danger = false) {
+  /** 菜单按钮元素。 */
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = danger ? "space-menu-action danger" : "space-menu-action";
+  button.textContent = text;
+  return button;
+}
+
+/**
+ * 打开空间图标选择弹窗。
+ *
+ * @param {string} spaceId 空间 ID。
+ * @returns {void}
+ */
+function openSpaceIconPicker(spaceId) {
+  /** 待修改图标的空间。 */
+  const space = state.data.spaces.find((item) => item.id === spaceId);
+
+  if (!space) {
+    return;
+  }
+
+  state.iconPickerSpaceId = spaceId;
+  state.selectedSpaceIcon = getDisplaySpaceIcon(space.icon);
+  state.openSpaceMenuId = "";
+  renderSpaces();
+  renderSpaceIconPicker();
+}
+
+/**
+ * 关闭空间图标选择弹窗。
+ *
+ * @returns {void}
+ */
+function closeSpaceIconPicker() {
+  state.iconPickerSpaceId = "";
+  state.selectedSpaceIcon = "";
+  renderSpaceIconPicker();
+}
+
+/**
+ * 渲染空间图标选择弹窗。
+ *
+ * @returns {void}
+ */
+function renderSpaceIconPicker() {
+  elements.spaceIconDialog.hidden = !state.iconPickerSpaceId;
+
+  if (!state.iconPickerSpaceId) {
+    clearElement(elements.spaceIconGrid);
+    return;
+  }
+
+  clearElement(elements.spaceIconGrid);
+
+  for (const icon of SPACE_ICON_OPTIONS) {
+    /** 图标选项按钮。 */
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "space-icon-option";
+    button.textContent = icon;
+    button.setAttribute("aria-label", `选择图标 ${icon}`);
+
+    if (icon === state.selectedSpaceIcon) {
+      button.classList.add("selected");
+    }
+
+    button.addEventListener("click", () => {
+      state.selectedSpaceIcon = icon;
+      renderSpaceIconPicker();
+    });
+
+    elements.spaceIconGrid.appendChild(button);
+  }
+}
+
+/**
+ * 确认修改空间图标。
+ *
+ * @returns {Promise<void>} 保存图标后结束。
+ */
+async function confirmSpaceIconChange() {
+  /** 待修改图标的空间。 */
+  const space = state.data.spaces.find((item) => item.id === state.iconPickerSpaceId);
+
+  if (!space || !state.selectedSpaceIcon) {
+    closeSpaceIconPicker();
+    return;
+  }
+
+  space.icon = state.selectedSpaceIcon;
+  space.updatedAt = Date.now();
+  closeSpaceIconPicker();
+  await saveData();
+  renderAll();
 }
 
 /**
@@ -397,10 +744,19 @@ function createGroupElement(group) {
   /** 分组外层元素。 */
   const groupElement = document.createElement("article");
   groupElement.className = "group-section";
-  groupElement.draggable = true;
+  groupElement.draggable = !group.pinned;
   groupElement.dataset.groupId = group.id;
 
+  if (group.pinned) {
+    groupElement.classList.add("pinned");
+  }
+
   groupElement.addEventListener("dragstart", (event) => {
+    if (group.pinned) {
+      event.preventDefault();
+      return;
+    }
+
     state.draggedGroupId = group.id;
     event.dataTransfer.setData("text/plain", group.id);
   });
@@ -427,8 +783,8 @@ function createGroupElement(group) {
   /** 分组标题区域。 */
   const titleBlock = document.createElement("div");
   titleBlock.className = "group-title-block";
-  titleBlock.append(createTextElement("h2", "group-name", group.name));
-  titleBlock.append(createTextElement("div", "group-meta", `${group.links.length} 个链接 · 可拖拽排序`));
+  titleBlock.append(createGroupNameElement(group));
+  titleBlock.append(createTextElement("div", "group-meta", `${group.links.length} 个链接 · ${group.pinned ? "已固定" : "可拖拽排序"}`));
 
   /** 分组操作按钮区域。 */
   const actions = document.createElement("div");
@@ -449,6 +805,33 @@ function createGroupElement(group) {
   collapseButton.setAttribute("aria-label", `${group.collapsed ? "展开" : "折叠"}分组 ${group.name}`);
   collapseButton.addEventListener("click", () => toggleGroup(group.id));
 
+  /** 固定或取消固定当前分组的按钮。 */
+  const pinButton = document.createElement("button");
+  pinButton.type = "button";
+  pinButton.className = "group-small-button";
+  pinButton.textContent = group.pinned ? "取消固定" : "固定";
+  pinButton.setAttribute("aria-label", `${group.pinned ? "取消固定" : "固定"}分组 ${group.name}`);
+  pinButton.addEventListener("click", () => toggleGroupPinned(group.id));
+
+  /** 移动当前分组到其他空间的操作容器。 */
+  const moveWrap = document.createElement("div");
+  moveWrap.className = "group-move-wrap";
+
+  /** 移动当前分组到其他空间的按钮。 */
+  const moveButton = document.createElement("button");
+  moveButton.type = "button";
+  moveButton.className = "group-small-button group-move-button";
+  moveButton.textContent = "移动到空间 ›";
+  moveButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleMoveGroupMenu(group.id);
+  });
+  moveWrap.appendChild(moveButton);
+
+  if (state.movingGroupId === group.id) {
+    moveWrap.appendChild(createMoveGroupMenuElement(group));
+  }
+
   /** 删除当前分组的按钮。 */
   const deleteButton = document.createElement("button");
   deleteButton.type = "button";
@@ -456,7 +839,7 @@ function createGroupElement(group) {
   deleteButton.textContent = "删除";
   deleteButton.addEventListener("click", () => deleteGroup(group.id));
 
-  actions.append(openButton, collapseButton, deleteButton);
+  actions.append(openButton, collapseButton, pinButton, moveWrap, deleteButton);
   header.append(titleBlock, actions);
   groupElement.appendChild(header);
 
@@ -497,6 +880,93 @@ function createGroupElement(group) {
 }
 
 /**
+ * 创建可编辑的分组名称元素。
+ *
+ * @param {object} group 分组数据。
+ * @returns {HTMLElement} 分组名称元素。
+ */
+function createGroupNameElement(group) {
+  if (state.editingGroupId === group.id) {
+    /** 分组名称输入框。 */
+    const input = document.createElement("input");
+    input.className = "group-name-input";
+    input.type = "text";
+    input.value = group.name;
+    input.maxLength = 64;
+    input.setAttribute("aria-label", `编辑分组 ${group.name} 的名称`);
+
+    input.addEventListener("click", (event) => event.stopPropagation());
+    input.addEventListener("keydown", async (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        await renameGroup(group.id, input.value);
+      }
+
+      if (event.key === "Escape") {
+        state.editingGroupId = "";
+        renderGroups();
+      }
+    });
+    input.addEventListener("blur", () => renameGroup(group.id, input.value));
+    requestAnimationFrame(() => {
+      input.focus();
+      input.select();
+    });
+    return input;
+  }
+
+  /** 分组名称按钮。 */
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "group-name-button";
+  button.title = "点击编辑分组名称";
+  button.textContent = `${group.pinned ? "📌 " : ""}${group.name}`;
+  button.addEventListener("click", () => {
+    state.editingGroupId = group.id;
+    state.movingGroupId = "";
+    renderGroups();
+  });
+  return button;
+}
+
+/**
+ * 创建移动分组的空间选择菜单。
+ *
+ * @param {object} group 待移动分组。
+ * @returns {HTMLElement} 移动分组菜单元素。
+ */
+function createMoveGroupMenuElement(group) {
+  /** 当前激活空间。 */
+  const activeSpace = getActiveSpace();
+  /** 移动分组菜单容器。 */
+  const menu = document.createElement("div");
+  menu.className = "move-group-menu";
+
+  for (const space of state.data.spaces) {
+    if (!activeSpace || space.id === activeSpace.id) {
+      continue;
+    }
+
+    /** 目标空间按钮。 */
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "move-group-space-button";
+    button.textContent = `${getDisplaySpaceIcon(space.icon)} ${space.name}`;
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      moveGroupToSpace(group.id, space.id);
+    });
+    menu.appendChild(button);
+  }
+
+  if (menu.children.length === 0) {
+    menu.appendChild(createTextElement("div", "panel-message", "没有可移动到的其他空间。"));
+  }
+
+  return menu;
+}
+
+/**
  * 创建单个链接卡片 DOM 元素。
  *
  * @param {string} groupId 链接所属分组 ID。
@@ -515,6 +985,10 @@ function createLinkElement(groupId, link) {
   if (state.batchDeleteEnabled) {
     card.classList.add("batch-mode");
   }
+
+  card.addEventListener("click", () => {
+    state.movingGroupId = "";
+  });
 
   if (state.selectedLinkIds.has(link.id)) {
     card.classList.add("selected");
@@ -605,7 +1079,17 @@ function renderCurrentTabs() {
     return;
   }
 
-  for (const tab of state.currentTabs) {
+  /** 统一小写后的当前标签搜索关键词。 */
+  const tabKeyword = state.tabSearchKeyword.trim().toLowerCase();
+  /** 当前需要展示的标签页列表。 */
+  const visibleTabs = filterCurrentTabs(state.currentTabs, tabKeyword);
+
+  if (visibleTabs.length === 0) {
+    elements.currentTabsList.appendChild(createTextElement("div", "panel-message", "没有找到匹配的当前标签。"));
+    return;
+  }
+
+  for (const tab of visibleTabs) {
     /** 当前标签页按钮。 */
     const item = document.createElement("button");
     item.type = "button";
@@ -619,7 +1103,18 @@ function renderCurrentTabs() {
     content.append(createTextElement("div", "tab-title", tab.title));
     content.append(createTextElement("div", "tab-url", tab.url));
 
-    item.append(createFavicon(tab.favIconUrl, tab.title || tab.url), content);
+    /** 单个当前标签保存按钮。 */
+    const saveButton = document.createElement("button");
+    saveButton.type = "button";
+    saveButton.className = "tab-save-button";
+    saveButton.textContent = "保存";
+    saveButton.setAttribute("aria-label", `保存标签 ${tab.title || tab.url}`);
+    saveButton.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      await saveSingleTabToGroup(tab);
+    });
+
+    item.append(createFavicon(tab.favIconUrl, tab.title || tab.url), content, saveButton);
     item.addEventListener("click", () => activateTab(tab.tabId));
     item.addEventListener("dragstart", (event) => {
       event.stopPropagation();
@@ -631,18 +1126,123 @@ function renderCurrentTabs() {
 }
 
 /**
+ * 切换创建空间方式菜单显示状态。
+ *
+ * @returns {void}
+ */
+function toggleCreateSpaceMenu() {
+  state.createSpaceMenuOpen = !state.createSpaceMenuOpen;
+  state.openSpaceMenuId = "";
+  elements.createSpaceMenu.hidden = !state.createSpaceMenuOpen;
+}
+
+/**
+ * 关闭创建空间方式菜单。
+ *
+ * @returns {void}
+ */
+function closeCreateSpaceMenu() {
+  state.createSpaceMenuOpen = false;
+  elements.createSpaceMenu.hidden = true;
+}
+
+/**
+ * 从创建菜单触发新建空白空间。
+ *
+ * @returns {Promise<void>} 创建流程结束后结束。
+ */
+async function createBlankSpaceFromMenu() {
+  openCreateSpaceDialog();
+}
+
+/**
+ * 提示 Toby 导入能力暂未开放。
+ *
+ * @returns {void}
+ */
+function showTobyImportPlaceholder() {
+  closeCreateSpaceMenu();
+  alert("Toby 导入即将支持，后续会解析 Toby 导出的空间数据。");
+}
+
+/**
+ * 提示浏览器书签导入能力暂未开放。
+ *
+ * @returns {void}
+ */
+function showBookmarksImportPlaceholder() {
+  closeCreateSpaceMenu();
+  alert("浏览器书签导入需要启用 bookmarks 权限，后续会接入 chrome.bookmarks 读取书签。");
+}
+
+/**
+ * 打开创建空间弹窗。
+ *
+ * @returns {void}
+ */
+function openCreateSpaceDialog() {
+  closeCreateSpaceMenu();
+  state.createSpaceDialogOpen = true;
+  state.createSpaceDialogError = "";
+  elements.createSpaceNameInput.value = "";
+  renderCreateSpaceDialog();
+  requestAnimationFrame(() => elements.createSpaceNameInput.focus());
+}
+
+/**
+ * 关闭创建空间弹窗。
+ *
+ * @returns {void}
+ */
+function closeCreateSpaceDialog() {
+  state.createSpaceDialogOpen = false;
+  state.createSpaceDialogError = "";
+  elements.createSpaceNameInput.value = "";
+  renderCreateSpaceDialog();
+}
+
+/**
+ * 渲染创建空间弹窗状态。
+ *
+ * @returns {void}
+ */
+function renderCreateSpaceDialog() {
+  elements.createSpaceDialog.hidden = !state.createSpaceDialogOpen;
+  elements.createSpaceError.textContent = state.createSpaceDialogError;
+}
+
+/**
+ * 提交创建空间弹窗。
+ *
+ * @returns {Promise<void>} 创建完成后结束。
+ */
+async function submitCreateSpaceDialog() {
+  await createSpace(elements.createSpaceNameInput.value);
+}
+
+/**
  * 新建空间。
  *
+ * @param {string} name 用户输入的空间名称。
  * @returns {Promise<void>} 创建并保存后结束。
  */
-async function createSpace() {
-  /** 用户输入的空间名称。 */
-  const name = prompt("请输入空间名称");
-
+async function createSpace(name) {
   if (!name || !name.trim()) {
-    if (name !== null) {
-      alert("请输入空间名称");
-    }
+    state.createSpaceDialogError = "请输入空间名称";
+    renderCreateSpaceDialog();
+    elements.createSpaceNameInput.focus();
+    return;
+  }
+
+  /** 去除前后空格后的空间名称。 */
+  const trimmedName = name.trim();
+  /** 是否已经存在同名空间。 */
+  const nameExists = state.data.spaces.some((space) => space.name.trim() === trimmedName);
+
+  if (nameExists) {
+    state.createSpaceDialogError = "空间名称已存在，请换一个名称。";
+    renderCreateSpaceDialog();
+    elements.createSpaceNameInput.select();
     return;
   }
 
@@ -651,15 +1251,16 @@ async function createSpace() {
   /** 新空间数据。 */
   const space = {
     id: createId("space"),
-    name: name.trim(),
-    icon: "folder",
+    name: trimmedName,
+    icon: UI_DEFAULT_SPACE_ICON,
     groups: [],
     createdAt: now,
     updatedAt: now
   };
 
-  state.data.spaces.unshift(space);
+  state.data.spaces.push(space);
   state.data.activeSpaceId = space.id;
+  closeCreateSpaceDialog();
   await saveData();
   renderAll();
 }
@@ -696,6 +1297,7 @@ async function deleteSpace(spaceId) {
     state.data.activeSpaceId = state.data.spaces[0].id;
   }
 
+  state.openSpaceMenuId = "";
   await saveData();
   renderAll();
 }
@@ -729,6 +1331,7 @@ async function createGroup() {
     id: createId("group"),
     name: name.trim(),
     collapsed: false,
+    pinned: false,
     links: [],
     createdAt: now,
     updatedAt: now
@@ -786,6 +1389,114 @@ async function toggleGroup(groupId) {
   }
 
   group.collapsed = !group.collapsed;
+  group.updatedAt = Date.now();
+  activeSpace.updatedAt = Date.now();
+
+  await saveData();
+  renderAll();
+}
+
+/**
+ * 固定或取消固定当前空间内的分组。
+ *
+ * @param {string} groupId 分组 ID。
+ * @returns {Promise<void>} 切换并保存后结束。
+ */
+async function toggleGroupPinned(groupId) {
+  /** 当前激活空间。 */
+  const activeSpace = getActiveSpace();
+  /** 待切换固定状态的分组。 */
+  const group = activeSpace && activeSpace.groups.find((item) => item.id === groupId);
+
+  if (!group) {
+    return;
+  }
+
+  group.pinned = !group.pinned;
+  group.updatedAt = Date.now();
+  activeSpace.updatedAt = Date.now();
+  state.draggedGroupId = "";
+
+  await saveData();
+  renderAll();
+}
+
+/**
+ * 切换移动分组菜单显示状态。
+ *
+ * @param {string} groupId 分组 ID。
+ * @returns {void}
+ */
+function toggleMoveGroupMenu(groupId) {
+  state.movingGroupId = state.movingGroupId === groupId ? "" : groupId;
+  state.editingGroupId = "";
+  renderGroups();
+}
+
+/**
+ * 将当前空间内的分组移动到指定空间末尾。
+ *
+ * @param {string} groupId 待移动分组 ID。
+ * @param {string} targetSpaceId 目标空间 ID。
+ * @returns {Promise<void>} 移动并保存后结束。
+ */
+async function moveGroupToSpace(groupId, targetSpaceId) {
+  /** 当前激活空间。 */
+  const sourceSpace = getActiveSpace();
+  /** 目标空间。 */
+  const targetSpace = state.data.spaces.find((space) => space.id === targetSpaceId);
+  /** 待移动分组索引。 */
+  const sourceGroupIndex = sourceSpace ? sourceSpace.groups.findIndex((group) => group.id === groupId) : -1;
+
+  if (!sourceSpace || !targetSpace || sourceSpace.id === targetSpace.id || sourceGroupIndex < 0) {
+    return;
+  }
+
+  /** 待移动分组。 */
+  const group = sourceSpace.groups[sourceGroupIndex];
+  /** 当前时间戳。 */
+  const now = Date.now();
+  sourceSpace.groups.splice(sourceGroupIndex, 1);
+  targetSpace.groups.push({
+    ...group,
+    updatedAt: now
+  });
+  sourceSpace.updatedAt = now;
+  targetSpace.updatedAt = now;
+  state.movingGroupId = "";
+  state.draggedGroupId = "";
+
+  await saveData();
+  renderAll();
+}
+
+/**
+ * 修改当前空间内的分组名称。
+ *
+ * @param {string} groupId 分组 ID。
+ * @param {string} name 用户输入的新分组名称。
+ * @returns {Promise<void>} 修改并保存后结束。
+ */
+async function renameGroup(groupId, name) {
+  /** 当前激活空间。 */
+  const activeSpace = getActiveSpace();
+  /** 待重命名的分组。 */
+  const group = activeSpace && activeSpace.groups.find((item) => item.id === groupId);
+
+  if (!group) {
+    return;
+  }
+
+  /** 去除前后空格后的分组名称。 */
+  const trimmedName = String(name || "").trim();
+  state.editingGroupId = "";
+
+  if (!trimmedName || trimmedName === group.name) {
+    renderGroups();
+    return;
+  }
+
+  group.name = trimmedName;
   group.updatedAt = Date.now();
   activeSpace.updatedAt = Date.now();
 
@@ -955,12 +1666,56 @@ async function saveCurrentTabsToGroup() {
     id: createId("group"),
     name: name.trim(),
     collapsed: false,
+    pinned: false,
     createdAt: now,
     updatedAt: now,
     links
   });
   activeSpace.updatedAt = now;
 
+  await saveData();
+  renderAll();
+}
+
+/**
+ * 将单个当前标签页保存到指定分组。
+ *
+ * @param {object} tab 当前标签页数据。
+ * @returns {Promise<void>} 保存完成后结束。
+ */
+async function saveSingleTabToGroup(tab) {
+  /** 当前激活空间。 */
+  const activeSpace = getActiveSpace();
+
+  if (!activeSpace || !tab) {
+    return;
+  }
+
+  if (activeSpace.groups.length === 0) {
+    alert("请先创建一个分组，再保存单个标签。");
+    return;
+  }
+
+  /** 分组选择提示文本。 */
+  const groupOptions = activeSpace.groups.map((group, index) => `${index + 1}. ${group.name}`).join("\n");
+  /** 用户输入的分组序号。 */
+  const input = prompt(`请输入要保存到的分组序号：\n${groupOptions}`, "1");
+
+  if (!input) {
+    return;
+  }
+
+  /** 用户选择的分组索引。 */
+  const groupIndex = Number(input) - 1;
+  /** 用户选择的目标分组。 */
+  const targetGroup = activeSpace.groups[groupIndex];
+
+  if (!Number.isInteger(groupIndex) || !targetGroup) {
+    alert("请输入有效的分组序号。");
+    return;
+  }
+
+  state.data = addLinksToGroup(state.data, activeSpace.id, targetGroup.id, tabsToLinks([tab]));
   await saveData();
   renderAll();
 }
@@ -999,11 +1754,57 @@ function exportCurrentData() {
 }
 
 /**
+ * 导出指定空间数据。
+ *
+ * @param {string} spaceId 空间 ID。
+ * @returns {void}
+ */
+function exportSpace(spaceId) {
+  /** 待导出的空间。 */
+  const space = state.data.spaces.find((item) => item.id === spaceId);
+
+  if (!space) {
+    return;
+  }
+
+  /** 当前时间戳。 */
+  const now = getCurrentTime();
+  /** 空间导出文件名。 */
+  const filename = `mytabdesk-space-${space.name}-${formatDateTime(now).replace(/[: ]/g, "-")}.json`;
+  /** 空间导出数据包。 */
+  const payload = JSON.stringify({
+    backupVersion: BACKUP_VERSION,
+    appVersion: APP_VERSION,
+    exportedAt: now,
+    type: "space",
+    space
+  }, null, 2);
+
+  state.openSpaceMenuId = "";
+  renderSpaces();
+  downloadTextFile(filename, payload);
+}
+
+/**
  * 请求选择导入文件。
  *
  * @returns {void}
  */
 function requestImportData() {
+  state.importMode = "data";
+  elements.importFileInput.value = "";
+  elements.importFileInput.click();
+}
+
+/**
+ * 请求选择单空间导入文件。
+ *
+ * @returns {void}
+ */
+function requestImportSpace() {
+  state.importMode = "space";
+  state.createSpaceMenuOpen = false;
+  elements.createSpaceMenu.hidden = true;
   elements.importFileInput.value = "";
   elements.importFileInput.click();
 }
@@ -1025,6 +1826,12 @@ async function importSelectedFile(event) {
   try {
     /** 文件文本内容。 */
     const text = await file.text();
+
+    if (state.importMode === "space") {
+      await importSpaceFromText(text);
+      return;
+    }
+
     /** 解析并迁移后的导入数据。 */
     const importedData = importData(text);
     /** 覆盖当前数据前的用户确认结果。 */
@@ -1037,12 +1844,76 @@ async function importSelectedFile(event) {
     state.data = importedData;
     state.selectedLinkIds.clear();
     state.batchDeleteEnabled = false;
-    await saveData();
+    state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
+    await saveData({ skipAutoSync: true });
     renderAll();
     alert("数据导入成功。");
   } catch (error) {
     alert(error.message || "数据导入失败，请检查文件内容。");
+  } finally {
+    state.importMode = "data";
   }
+}
+
+/**
+ * 从文本导入单个空间。
+ *
+ * @param {string} text 单空间 JSON 文本。
+ * @returns {Promise<void>} 导入完成后结束。
+ * @throws {Error} 当文件内容不是有效空间导出文件时抛出错误。
+ */
+async function importSpaceFromText(text) {
+  /** 解析后的空间导入包。 */
+  let parsedData = null;
+
+  try {
+    parsedData = JSON.parse(text);
+  } catch (error) {
+    throw new Error("导入空间文件不是有效的 JSON");
+  }
+
+  /** 待导入的空间数据。 */
+  const importedSpace = parsedData && parsedData.type === "space" && parsedData.space ? parsedData.space : null;
+
+  if (!importedSpace || !importedSpace.name || !Array.isArray(importedSpace.groups)) {
+    throw new Error("请选择由导出空间功能生成的 JSON 文件。");
+  }
+
+  /** 去除前后空格后的空间名称。 */
+  const trimmedName = importedSpace.name.trim();
+  /** 是否已存在同名空间。 */
+  const nameExists = state.data.spaces.some((space) => space.name.trim() === trimmedName);
+
+  if (nameExists) {
+    throw new Error("空间名称已存在，请先重命名后再导入。");
+  }
+
+  /** 当前时间戳。 */
+  const now = getCurrentTime();
+  /** 标准化后的临时数据。 */
+  const normalizedData = normalizeData({
+    version: 1,
+    activeSpaceId: importedSpace.id || createId("space"),
+    spaces: [
+      {
+        ...importedSpace,
+        id: importedSpace.id || createId("space"),
+        name: trimmedName,
+        icon: importedSpace.icon || UI_DEFAULT_SPACE_ICON,
+        createdAt: importedSpace.createdAt || now,
+        updatedAt: importedSpace.updatedAt || now
+      }
+    ],
+    settings: {}
+  });
+  /** 标准化后的空间。 */
+  const space = normalizedData.spaces[0];
+
+  state.data.spaces.push(space);
+  state.data.activeSpaceId = space.id;
+  await saveData();
+  renderAll();
+  alert("空间导入成功。");
 }
 
 /**
@@ -1196,6 +2067,19 @@ async function handleGroupDrop(spaceId, targetGroupId) {
     return;
   }
 
+  /** 当前操作空间。 */
+  const space = state.data.spaces.find((item) => item.id === spaceId);
+  /** 正在拖拽的分组。 */
+  const sourceGroup = space && space.groups.find((item) => item.id === state.draggedGroupId);
+  /** 放置目标分组。 */
+  const targetGroup = space && space.groups.find((item) => item.id === targetGroupId);
+
+  if (!sourceGroup || !targetGroup || sourceGroup.pinned || targetGroup.pinned) {
+    state.draggedGroupId = "";
+    renderGroups();
+    return;
+  }
+
   state.data = reorderGroups(state.data, spaceId, state.draggedGroupId, targetGroupId);
   state.draggedGroupId = "";
   await saveData();
@@ -1288,13 +2172,29 @@ function openSettings() {
 }
 
 /**
- * 从设置页返回工作台视图。
+ * 获取自动同步状态展示文本。
  *
- * @returns {void}
+ * @param {object} sync 当前同步配置。
+ * @returns {string} 自动同步状态文本。
  */
-function closeSettings() {
-  state.viewMode = "workspace";
-  renderAll();
+function getAutoSyncStatusText(sync) {
+  if (!isAutoSyncEnabled(sync)) {
+    return "未启用";
+  }
+
+  if (sync.lastAutoSyncError) {
+    return `失败：${sync.lastAutoSyncError}`;
+  }
+
+  if (sync.autoSyncPendingAt > 0) {
+    return `待同步 ${formatDateTime(sync.autoSyncPendingAt)}`;
+  }
+
+  if (sync.lastAutoSyncAt > 0) {
+    return `已同步 ${formatDateTime(sync.lastAutoSyncAt)}`;
+  }
+
+  return "已启用，等待本地变动";
 }
 
 /**
@@ -1307,12 +2207,31 @@ function renderSettingsStatus() {
   const sync = state.data.settings.sync || {};
   /** 全量数据最近更新时间。 */
   const updatedAt = getDataUpdatedAt(state.data);
+  /** 当前数据统计信息。 */
+  const summary = getDataSummary(state.data);
+  /** 当前同步服务商。 */
+  const provider = sync.provider || "none";
 
-  elements.syncModeValue.textContent = "手动同步基础版";
+  elements.settingsVersionValue.textContent = state.data.version || "-";
+  elements.settingsSpaceCountValue.textContent = summary.spaceCount;
+  elements.settingsGroupCountValue.textContent = summary.groupCount;
+  elements.settingsLinkCountValue.textContent = summary.linkCount;
+  elements.syncModeValue.textContent = provider !== "none" ? `手动同步：${provider}` : "手动同步基础版";
   elements.syncDeviceIdValue.textContent = sync.deviceId || "-";
   elements.syncLastModifiedValue.textContent = updatedAt > 0 ? formatDateTime(updatedAt) : "-";
   elements.syncLastBackupValue.textContent = sync.lastBackupAt > 0 ? formatDateTime(sync.lastBackupAt) : "从未备份";
-  elements.syncLastImportValue.textContent = sync.lastImportAt > 0 ? formatDateTime(sync.lastImportAt) : "从未导入";
+  elements.syncLastImportValue.textContent = sync.lastImportAt > 0 ? formatDateTime(sync.lastImportAt) : sync.lastSyncAt > 0 ? `最近同步 ${formatDateTime(sync.lastSyncAt)}` : "从未导入";
+  elements.syncAutoStatusValue.textContent = getAutoSyncStatusText(sync);
+  elements.gistSyncSwitch.checked = provider === "gist";
+  elements.webdavSyncSwitch.checked = provider === "webdav";
+  elements.gistAutoSyncSwitch.checked = Boolean(sync.gistAutoSyncEnabled);
+  elements.webdavAutoSyncSwitch.checked = Boolean(sync.webdavAutoSyncEnabled);
+  elements.webdavUrlInput.value = sync.webdavUrl || "";
+  elements.webdavUsernameInput.value = sync.webdavUsername || "";
+  elements.webdavPasswordInput.value = sync.webdavPassword || "";
+  elements.gistTokenInput.value = sync.gistToken || "";
+  elements.gistIdInput.value = sync.gistId || "";
+  elements.gistFilenameInput.value = sync.gistFilename || "mytabdesk-sync.json";
 }
 
 /**
@@ -1344,7 +2263,7 @@ async function handleExportEncryptedBackup() {
     URL.revokeObjectURL(link.href);
 
     state.data.settings.sync.lastBackupAt = getCurrentTime();
-    await saveData();
+    await saveData({ skipAutoSync: true });
     renderSettingsStatus();
     alert("加密备份已导出。");
   } catch (error) {
@@ -1420,7 +2339,8 @@ async function importEncryptedBackupFile(event) {
 
     state.data = importedData;
     state.data.settings.sync.lastImportAt = getCurrentTime();
-    await saveData();
+    state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
+    await saveData({ skipAutoSync: true });
     renderAll();
     alert("加密备份已成功导入。");
   } catch (error) {
@@ -1431,19 +2351,475 @@ async function importEncryptedBackupFile(event) {
 }
 
 /**
+ * 从设置表单读取同步配置。
+ *
+ * @returns {object} 表单中的同步配置对象。
+ */
+function readSyncSettingsForm() {
+  /** 表单中选中的同步服务商。 */
+  const provider = elements.webdavSyncSwitch.checked ? "webdav" : elements.gistSyncSwitch.checked ? "gist" : "none";
+
+  return {
+    provider,
+    webdavUrl: elements.webdavUrlInput.value.trim(),
+    webdavUsername: elements.webdavUsernameInput.value.trim(),
+    webdavPassword: elements.webdavPasswordInput.value,
+    webdavAutoSyncEnabled: elements.webdavAutoSyncSwitch.checked,
+    gistToken: elements.gistTokenInput.value.trim(),
+    gistId: elements.gistIdInput.value.trim(),
+    gistFilename: elements.gistFilenameInput.value.trim() || "mytabdesk-sync.json",
+    gistAutoSyncEnabled: elements.gistAutoSyncSwitch.checked
+  };
+}
+
+/**
+ * 保存同步配置到本地数据。
+ *
+ * @returns {Promise<void>} 保存完成后结束。
+ */
+async function saveSyncSettingsFromForm() {
+  /** 表单同步配置。 */
+  const form = readSyncSettingsForm();
+  /** 当前同步配置。 */
+  const sync = state.data.settings.sync;
+
+  Object.assign(sync, form);
+  await saveData({ skipAutoSync: true });
+  renderSettingsStatus();
+}
+
+/**
+ * 切换启用的远程同步服务商。
+ *
+ * @param {string} provider 需要启用的同步服务商。
+ * @returns {void}
+ */
+function selectSyncProvider(provider) {
+  if (provider === "gist") {
+    elements.gistSyncSwitch.checked = true;
+    elements.webdavSyncSwitch.checked = false;
+  } else if (provider === "webdav") {
+    elements.gistSyncSwitch.checked = false;
+    elements.webdavSyncSwitch.checked = true;
+  } else {
+    elements.gistSyncSwitch.checked = false;
+    elements.webdavSyncSwitch.checked = false;
+  }
+}
+
+/**
+ * 保存同步配置并提示用户。
+ *
+ * @returns {Promise<void>} 保存完成后结束。
+ */
+async function handleSaveSyncSettings() {
+  await saveSyncSettingsFromForm();
+  alert("同步配置已保存。");
+}
+
+/**
+ * 创建用于云端同步的普通备份文本。
+ *
+ * @returns {string} JSON 备份文本。
+ */
+function createSyncPayload() {
+  return exportData(state.data);
+}
+
+/**
+ * 自动上传本地数据到当前远程服务商。
+ *
+ * @param {object} sync 当前同步配置。
+ * @returns {Promise<void>} 上传完成后结束。
+ */
+async function uploadAutoSync(sync) {
+  /** 自动同步备份文本。 */
+  const payload = createSyncPayload();
+
+  if (sync.provider === "webdav") {
+    await uploadWebDav(sync, payload);
+    return;
+  }
+
+  /** 上传后返回的 Gist ID。 */
+  const gistId = await uploadGist(sync, payload);
+  state.data.settings.sync.gistId = gistId;
+
+  if (elements.gistIdInput) {
+    elements.gistIdInput.value = gistId;
+  }
+}
+
+/**
+ * 从当前远程服务商下载云端同步数据。
+ *
+ * @param {object} sync 当前同步配置。
+ * @returns {Promise<object|null>} 解析后的远端数据，远端不存在时返回 null。
+ */
+async function downloadRemoteSyncData(sync) {
+  try {
+    /** 云端备份文本。 */
+    const payload = sync.provider === "webdav" ? await downloadWebDav(sync) : await downloadGist(sync);
+    return importData(payload);
+  } catch (error) {
+    /** 错误消息文本。 */
+    const message = error && error.message ? error.message : "";
+    /** 是否为远端文件不存在错误。 */
+    const isMissingRemote = message.includes("404") || message.includes("未找到指定同步文件") || message.includes("请先填写 Gist ID");
+
+    if (isMissingRemote) {
+      return null;
+    }
+
+    throw error;
+  }
+}
+
+/**
+ * 将同步配置状态更新为已完成。
+ *
+ * @param {object} sync 当前同步配置。
+ * @param {number} syncedAt 同步完成时间戳。
+ * @returns {void}
+ */
+function markSyncCompleted(sync, syncedAt) {
+  sync.lastSyncAt = syncedAt;
+  sync.lastBackupAt = syncedAt;
+  sync.lastImportAt = syncedAt;
+  sync.lastAutoSyncAt = syncedAt;
+  sync.autoSyncPendingAt = 0;
+  sync.lastAutoSyncError = "";
+}
+
+/**
+ * 执行一次自动双向同步，先拉取远端数据，再自动合并并上传合并结果。
+ *
+ * @param {object} sync 当前同步配置。
+ * @returns {Promise<void>} 同步完成后结束。
+ */
+async function runBidirectionalSync(sync) {
+  /** 本地同步配置副本。 */
+  const localSync = Object.assign({}, state.data.settings.sync);
+  /** 远端工作台数据。 */
+  const remoteData = await downloadRemoteSyncData(sync);
+
+  if (remoteData) {
+    state.data = mergeWorkspaceData(state.data, remoteData, localSync.deviceId);
+    Object.assign(state.data.settings.sync, localSync, {
+      provider: sync.provider
+    });
+  }
+
+  await uploadAutoSync(state.data.settings.sync);
+  markSyncCompleted(state.data.settings.sync, getCurrentTime());
+  state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
+  await saveData({ skipAutoSync: true });
+}
+
+/**
+ * 立即执行一次待处理自动同步。
+ *
+ * @returns {Promise<void>} 同步尝试完成后结束。
+ */
+async function runAutoSyncNow() {
+  /** 当前同步配置。 */
+  const sync = getSyncSettings();
+
+  if (state.autoSyncRunning || !isAutoSyncEnabled(sync) || !sync.autoSyncPendingAt) {
+    return;
+  }
+
+  state.autoSyncRunning = true;
+
+  try {
+    validateSyncSettings();
+    await runBidirectionalSync(sync);
+  } catch (error) {
+    sync.lastAutoSyncError = error.message || "自动同步失败";
+    await saveData({ skipAutoSync: true });
+  } finally {
+    state.autoSyncRunning = false;
+    renderSettingsStatus();
+  }
+}
+
+/**
+ * 延迟调度一次自动同步，避免连续改动时重复上传。
+ *
+ * @returns {void}
+ */
+function scheduleAutoSync() {
+  /** 当前同步配置。 */
+  const sync = getSyncSettings();
+
+  if (!isAutoSyncEnabled(sync) || !sync.autoSyncPendingAt) {
+    return;
+  }
+
+  if (state.autoSyncTimerId) {
+    clearTimeout(state.autoSyncTimerId);
+  }
+
+  state.autoSyncTimerId = window.setTimeout(() => {
+    state.autoSyncTimerId = 0;
+    runAutoSyncNow();
+  }, 1200);
+}
+
+/**
+ * 校验当前同步服务商配置。
+ *
+ * @returns {object} 当前同步配置。
+ * @throws {Error} 当同步配置不完整时抛出错误。
+ */
+function validateSyncSettings() {
+  /** 当前同步配置。 */
+  const sync = state.data.settings.sync || {};
+
+  if (sync.provider === "webdav") {
+    if (!sync.webdavUrl || !sync.webdavUsername || !sync.webdavPassword) {
+      throw new Error("请先完整填写 WebDAV 地址、用户名和密码。");
+    }
+  } else if (sync.provider === "gist") {
+    if (!sync.gistToken) {
+      throw new Error("请先填写 GitHub Gist Token。");
+    }
+  } else {
+    throw new Error("请先选择 WebDAV 或 GitHub Gist 同步方式。");
+  }
+
+  return sync;
+}
+
+/**
+ * 上传备份文本到 WebDAV。
+ *
+ * @param {object} sync 同步配置。
+ * @param {string} payload 待上传的备份文本。
+ * @returns {Promise<void>} 上传完成后结束。
+ * @throws {Error} 当服务端返回失败状态时抛出错误。
+ */
+async function uploadWebDav(sync, payload) {
+  /** WebDAV 上传响应。 */
+  const response = await fetch(sync.webdavUrl, {
+    method: "PUT",
+    headers: {
+      Authorization: `Basic ${btoa(`${sync.webdavUsername}:${sync.webdavPassword}`)}`,
+      "Content-Type": "application/json;charset=utf-8"
+    },
+    body: payload
+  });
+
+  if (!response.ok) {
+    throw new Error(`WebDAV 上传失败：${response.status}`);
+  }
+}
+
+/**
+ * 从 WebDAV 下载备份文本。
+ *
+ * @param {object} sync 同步配置。
+ * @returns {Promise<string>} 下载得到的备份文本。
+ * @throws {Error} 当服务端返回失败状态时抛出错误。
+ */
+async function downloadWebDav(sync) {
+  /** WebDAV 下载响应。 */
+  const response = await fetch(sync.webdavUrl, {
+    method: "GET",
+    headers: {
+      Authorization: `Basic ${btoa(`${sync.webdavUsername}:${sync.webdavPassword}`)}`
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`WebDAV 下载失败：${response.status}`);
+  }
+
+  return response.text();
+}
+
+/**
+ * 上传备份文本到 GitHub Gist。
+ *
+ * @param {object} sync 同步配置。
+ * @param {string} payload 待上传的备份文本。
+ * @returns {Promise<string>} 上传后使用的 Gist ID。
+ * @throws {Error} 当服务端返回失败状态时抛出错误。
+ */
+async function uploadGist(sync, payload) {
+  /** Gist 文件名。 */
+  const filename = sync.gistFilename || "mytabdesk-sync.json";
+  /** Gist 请求地址。 */
+  const url = sync.gistId ? `https://api.github.com/gists/${sync.gistId}` : "https://api.github.com/gists";
+  /** Gist 上传响应。 */
+  const response = await fetch(url, {
+    method: sync.gistId ? "PATCH" : "POST",
+    headers: {
+      Authorization: `Bearer ${sync.gistToken}`,
+      Accept: "application/vnd.github+json",
+      "Content-Type": "application/json;charset=utf-8"
+    },
+    body: JSON.stringify({
+      description: "MyTabDesk manual sync backup",
+      public: false,
+      files: {
+        [filename]: {
+          content: payload
+        }
+      }
+    })
+  });
+
+  if (!response.ok) {
+    throw new Error(`GitHub Gist 上传失败：${response.status}`);
+  }
+
+  /** Gist 响应数据。 */
+  const result = await response.json();
+  return result.id || sync.gistId;
+}
+
+/**
+ * 从 GitHub Gist 下载备份文本。
+ *
+ * @param {object} sync 同步配置。
+ * @returns {Promise<string>} 下载得到的备份文本。
+ * @throws {Error} 当服务端返回失败状态时抛出错误。
+ */
+async function downloadGist(sync) {
+  if (!sync.gistId) {
+    throw new Error("请先填写 Gist ID，或先上传一次自动创建 Gist。");
+  }
+
+  /** Gist 下载响应。 */
+  const response = await fetch(`https://api.github.com/gists/${sync.gistId}`, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${sync.gistToken}`,
+      Accept: "application/vnd.github+json"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`GitHub Gist 下载失败：${response.status}`);
+  }
+
+  /** Gist 响应数据。 */
+  const result = await response.json();
+  /** Gist 文件名。 */
+  const filename = sync.gistFilename || "mytabdesk-sync.json";
+  /** 目标 Gist 文件。 */
+  const file = result.files && result.files[filename] ? result.files[filename] : null;
+
+  if (!file || typeof file.content !== "string") {
+    throw new Error("Gist 中未找到指定同步文件。");
+  }
+
+  return file.content;
+}
+
+/**
+ * 手动上传当前数据到云端。
+ *
+ * @returns {Promise<void>} 上传完成后结束。
+ */
+async function uploadManualSync(provider) {
+  try {
+    selectSyncProvider(provider);
+    await saveSyncSettingsFromForm();
+    /** 当前同步配置。 */
+    const sync = validateSyncSettings();
+    /** 同步备份文本。 */
+    const payload = createSyncPayload();
+
+    if (sync.provider === "webdav") {
+      await uploadWebDav(sync, payload);
+    } else {
+      /** 上传后返回的 Gist ID。 */
+      const gistId = await uploadGist(sync, payload);
+      state.data.settings.sync.gistId = gistId;
+      elements.gistIdInput.value = gistId;
+    }
+
+    state.data.settings.sync.lastSyncAt = getCurrentTime();
+    state.data.settings.sync.lastBackupAt = state.data.settings.sync.lastSyncAt;
+    state.data.settings.sync.autoSyncPendingAt = 0;
+    state.data.settings.sync.lastAutoSyncAt = state.data.settings.sync.lastSyncAt;
+    state.data.settings.sync.lastAutoSyncError = "";
+    await saveData({ skipAutoSync: true });
+    renderSettingsStatus();
+    alert("已上传到云端。");
+  } catch (error) {
+    alert(error.message || "上传到云端失败。");
+  }
+}
+
+/**
+ * 从云端下载数据并导入本地。
+ *
+ * @returns {Promise<void>} 下载导入完成后结束。
+ */
+async function downloadManualSync(provider) {
+  try {
+    selectSyncProvider(provider);
+    await saveSyncSettingsFromForm();
+    /** 当前同步配置。 */
+    const sync = validateSyncSettings();
+    await runBidirectionalSync(sync);
+    renderAll();
+    alert("已从云端下载、自动合并并回传云端。");
+  } catch (error) {
+    alert(error.message || "从云端下载失败。");
+  }
+}
+
+/**
  * 绑定页面级事件。
  *
  * @returns {void}
  */
 function bindEvents() {
-  elements.createSpaceBtn.addEventListener("click", createSpace);
+  elements.createSpaceBtn.addEventListener("click", (event) => {
+    event.stopPropagation();
+    toggleCreateSpaceMenu();
+  });
+  elements.createBlankSpaceBtn.addEventListener("click", createBlankSpaceFromMenu);
+  elements.importSpaceBtn.addEventListener("click", requestImportSpace);
+  elements.importTobyBtn.addEventListener("click", showTobyImportPlaceholder);
+  elements.importBookmarksBtn.addEventListener("click", showBookmarksImportPlaceholder);
+  elements.closeSpaceIconDialogBtn.addEventListener("click", closeSpaceIconPicker);
+  elements.cancelSpaceIconBtn.addEventListener("click", closeSpaceIconPicker);
+  elements.confirmSpaceIconBtn.addEventListener("click", confirmSpaceIconChange);
+  elements.createSpaceDialog.addEventListener("click", (event) => {
+    if (event.target === elements.createSpaceDialog) {
+      closeCreateSpaceDialog();
+    }
+  });
+  elements.closeCreateSpaceDialogBtn.addEventListener("click", closeCreateSpaceDialog);
+  elements.cancelCreateSpaceBtn.addEventListener("click", closeCreateSpaceDialog);
+  elements.confirmCreateSpaceBtn.addEventListener("click", submitCreateSpaceDialog);
+  elements.createSpaceNameInput.addEventListener("input", () => {
+    state.createSpaceDialogError = "";
+    renderCreateSpaceDialog();
+  });
+  elements.createSpaceNameInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      submitCreateSpaceDialog();
+    }
+
+    if (event.key === "Escape") {
+      closeCreateSpaceDialog();
+    }
+  });
+  elements.spaceIconDialog.addEventListener("click", (event) => {
+    if (event.target === elements.spaceIconDialog) {
+      closeSpaceIconPicker();
+    }
+  });
   elements.createGroupBtn.addEventListener("click", createGroup);
   elements.refreshTabsBtn.addEventListener("click", refreshCurrentTabs);
   elements.saveCurrentTabsBtn.addEventListener("click", saveCurrentTabsToGroup);
-  elements.exportBtn.addEventListener("click", exportCurrentData);
-  elements.importBtn.addEventListener("click", requestImportData);
   elements.importFileInput.addEventListener("change", importSelectedFile);
-  elements.clearDataBtn.addEventListener("click", clearData);
   elements.toggleThemeBtn.addEventListener("click", toggleTheme);
   elements.toggleSidebarBtn.addEventListener("click", toggleSidebar);
   elements.toggleTabsPanelBtn.addEventListener("click", toggleTabsPanel);
@@ -1451,19 +2827,49 @@ function bindEvents() {
   elements.confirmBatchDeleteBtn.addEventListener("click", confirmBatchDelete);
   elements.cancelBatchDeleteBtn.addEventListener("click", toggleBatchDelete);
   elements.settingsBtn.addEventListener("click", openSettings);
-  elements.backToWorkspaceBtn.addEventListener("click", closeSettings);
+  elements.offlineExportBtn.addEventListener("click", exportCurrentData);
+  elements.offlineImportBtn.addEventListener("click", requestImportData);
   elements.exportEncryptedBtn.addEventListener("click", handleExportEncryptedBackup);
   elements.importEncryptedBtn.addEventListener("click", requestImportEncryptedBackup);
+  elements.saveSyncSettingsBtn.addEventListener("click", handleSaveSyncSettings);
+  elements.gistSyncSwitch.addEventListener("change", async () => {
+    selectSyncProvider(elements.gistSyncSwitch.checked ? "gist" : "none");
+    await saveSyncSettingsFromForm();
+  });
+  elements.webdavSyncSwitch.addEventListener("change", async () => {
+    selectSyncProvider(elements.webdavSyncSwitch.checked ? "webdav" : "none");
+    await saveSyncSettingsFromForm();
+  });
+  elements.gistAutoSyncSwitch.addEventListener("change", saveSyncSettingsFromForm);
+  elements.webdavAutoSyncSwitch.addEventListener("change", saveSyncSettingsFromForm);
+  elements.gistUploadSyncBtn.addEventListener("click", () => uploadManualSync("gist"));
+  elements.gistDownloadSyncBtn.addEventListener("click", () => downloadManualSync("gist"));
+  elements.webdavUploadSyncBtn.addEventListener("click", () => uploadManualSync("webdav"));
+  elements.webdavDownloadSyncBtn.addEventListener("click", () => downloadManualSync("webdav"));
   elements.encryptedBackupFileInput.addEventListener("change", importEncryptedBackupFile);
   elements.searchInput.addEventListener("input", (event) => {
     state.searchKeyword = event.target.value;
     renderGroups();
+  });
+  elements.tabSearchInput.addEventListener("input", (event) => {
+    state.tabSearchKeyword = event.target.value;
+    renderCurrentTabs();
   });
   document.addEventListener("dragend", () => {
     state.draggedSpaceId = "";
     state.draggedGroupId = "";
     state.draggedLink = null;
     state.draggedTab = null;
+  });
+  document.addEventListener("click", (event) => {
+    if (!event.target.closest(".space-item") && !event.target.closest(".space-menu-panel")) {
+      state.openSpaceMenuId = "";
+      renderSpaces();
+    }
+
+    if (!event.target.closest(".create-space-wrap")) {
+      closeCreateSpaceMenu();
+    }
   });
 }
 
@@ -1477,12 +2883,25 @@ function bindElements() {
   elements.importFileInput = getElement("importFileInput");
   elements.encryptedBackupFileInput = getElement("encryptedBackupFileInput");
   elements.createSpaceBtn = getElement("createSpaceBtn");
+  elements.createSpaceMenu = getElement("createSpaceMenu");
+  elements.createBlankSpaceBtn = getElement("createBlankSpaceBtn");
+  elements.importSpaceBtn = getElement("importSpaceBtn");
+  elements.importTobyBtn = getElement("importTobyBtn");
+  elements.importBookmarksBtn = getElement("importBookmarksBtn");
   elements.toggleSidebarBtn = getElement("toggleSidebarBtn");
   elements.spaceList = getElement("spaceList");
-  elements.exportBtn = getElement("exportBtn");
-  elements.importBtn = getElement("importBtn");
+  elements.spaceIconDialog = getElement("spaceIconDialog");
+  elements.spaceIconGrid = getElement("spaceIconGrid");
+  elements.createSpaceDialog = getElement("createSpaceDialog");
+  elements.createSpaceNameInput = getElement("createSpaceNameInput");
+  elements.createSpaceError = getElement("createSpaceError");
+  elements.closeCreateSpaceDialogBtn = getElement("closeCreateSpaceDialogBtn");
+  elements.cancelCreateSpaceBtn = getElement("cancelCreateSpaceBtn");
+  elements.confirmCreateSpaceBtn = getElement("confirmCreateSpaceBtn");
+  elements.closeSpaceIconDialogBtn = getElement("closeSpaceIconDialogBtn");
+  elements.cancelSpaceIconBtn = getElement("cancelSpaceIconBtn");
+  elements.confirmSpaceIconBtn = getElement("confirmSpaceIconBtn");
   elements.settingsBtn = getElement("settingsBtn");
-  elements.clearDataBtn = getElement("clearDataBtn");
   elements.currentSpaceName = getElement("currentSpaceName");
   elements.currentSpaceMeta = getElement("currentSpaceMeta");
   elements.searchInput = getElement("searchInput");
@@ -1497,16 +2916,38 @@ function bindElements() {
   elements.emptyState = getElement("emptyState");
   elements.workspaceToolbar = getElement("workspaceToolbar");
   elements.settingsView = getElement("settingsView");
-  elements.backToWorkspaceBtn = getElement("backToWorkspaceBtn");
+  elements.offlineExportBtn = getElement("offlineExportBtn");
+  elements.offlineImportBtn = getElement("offlineImportBtn");
   elements.backupPasswordInput = getElement("backupPasswordInput");
   elements.exportEncryptedBtn = getElement("exportEncryptedBtn");
   elements.importEncryptedBtn = getElement("importEncryptedBtn");
+  elements.gistSyncSwitch = getElement("gistSyncSwitch");
+  elements.webdavSyncSwitch = getElement("webdavSyncSwitch");
+  elements.gistAutoSyncSwitch = getElement("gistAutoSyncSwitch");
+  elements.webdavAutoSyncSwitch = getElement("webdavAutoSyncSwitch");
+  elements.webdavUrlInput = getElement("webdavUrlInput");
+  elements.webdavUsernameInput = getElement("webdavUsernameInput");
+  elements.webdavPasswordInput = getElement("webdavPasswordInput");
+  elements.gistTokenInput = getElement("gistTokenInput");
+  elements.gistIdInput = getElement("gistIdInput");
+  elements.gistFilenameInput = getElement("gistFilenameInput");
+  elements.saveSyncSettingsBtn = getElement("saveSyncSettingsBtn");
+  elements.gistUploadSyncBtn = getElement("gistUploadSyncBtn");
+  elements.gistDownloadSyncBtn = getElement("gistDownloadSyncBtn");
+  elements.webdavUploadSyncBtn = getElement("webdavUploadSyncBtn");
+  elements.webdavDownloadSyncBtn = getElement("webdavDownloadSyncBtn");
   elements.syncModeValue = getElement("syncModeValue");
   elements.syncDeviceIdValue = getElement("syncDeviceIdValue");
   elements.syncLastModifiedValue = getElement("syncLastModifiedValue");
   elements.syncLastBackupValue = getElement("syncLastBackupValue");
   elements.syncLastImportValue = getElement("syncLastImportValue");
+  elements.syncAutoStatusValue = getElement("syncAutoStatusValue");
+  elements.settingsVersionValue = getElement("settingsVersionValue");
+  elements.settingsSpaceCountValue = getElement("settingsSpaceCountValue");
+  elements.settingsGroupCountValue = getElement("settingsGroupCountValue");
+  elements.settingsLinkCountValue = getElement("settingsLinkCountValue");
   elements.tabsTitle = getElement("tabsTitle");
+  elements.tabSearchInput = getElement("tabSearchInput");
   elements.refreshTabsBtn = getElement("refreshTabsBtn");
   elements.saveCurrentTabsBtn = getElement("saveCurrentTabsBtn");
   elements.currentTabsList = getElement("currentTabsList");
@@ -1520,10 +2961,13 @@ function bindElements() {
 async function init() {
   bindElements();
   state.data = ensureSyncSettings(await loadData());
-  await saveData();
+  state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
+  await saveData({ skipAutoSync: true });
   bindEvents();
   renderAll();
+  scheduleAutoSync();
   await refreshCurrentTabs();
 }
 
 document.addEventListener("DOMContentLoaded", init);
+})();

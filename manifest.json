@@ -7,12 +7,23 @@
     "tabs",
     "storage"
   ],
-  "chrome_url_overrides": {
-    "newtab": "newtab.html"
+  "host_permissions": [
+    "https://*/*"
+  ],
+  "action": {
+    "default_title": "MyTabDesk",
+    "default_icon": {
+      "16": "assets/icon16.png",
+      "48": "assets/icon48.png",
+      "128": "assets/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
   },
   "icons": {
-    "16": "assets/icon16.svg",
-    "48": "assets/icon48.svg",
-    "128": "assets/icon128.svg"
+    "16": "assets/icon16.png",
+    "48": "assets/icon48.png",
+    "128": "assets/icon128.png"
   }
 }

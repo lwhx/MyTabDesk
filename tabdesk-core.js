@@ -1,3 +1,4 @@
+(function (root) {
 /**
  * 本地存储键名，用于在 chrome.storage.local 中保存 MyTabDesk 全量数据。
  */
@@ -21,13 +22,35 @@ const DEFAULT_SYNC_SETTINGS = {
   deviceName: "本机浏览器",
   mode: "manual",
   lastBackupAt: 0,
-  lastImportAt: 0
+  lastImportAt: 0,
+  provider: "none",
+  webdavUrl: "",
+  webdavUsername: "",
+  webdavPassword: "",
+  webdavAutoSyncEnabled: false,
+  gistToken: "",
+  gistId: "",
+  gistFilename: "mytabdesk-sync.json",
+  gistAutoSyncEnabled: false,
+  autoSyncPendingAt: 0,
+  lastAutoSyncAt: 0,
+  lastAutoSyncError: "",
+  lastSyncAt: 0
 };
 
 /**
  * 默认空间 ID，用于初始化数据和清空数据后的兜底空间。
  */
 const DEFAULT_SPACE_ID = "default-space";
+
+/**
+ * 获取默认空间图标，用于初始化数据和兼容旧数据。
+ *
+ * @returns {string} 默认空间图标。
+ */
+function getDefaultSpaceIcon() {
+  return "📁";
+}
 
 /**
  * 获取当前时间戳。
@@ -77,7 +100,7 @@ function createDefaultData() {
       {
         id: DEFAULT_SPACE_ID,
         name: "默认空间",
-        icon: "folder",
+        icon: getDefaultSpaceIcon(),
         groups: [],
         createdAt: now,
         updatedAt: now
@@ -130,6 +153,7 @@ function normalizeGroup(group) {
     id: group && group.id ? group.id : createId("group"),
     name: group && group.name ? group.name : "未命名分组",
     collapsed: Boolean(group && group.collapsed),
+    pinned: Boolean(group && group.pinned),
     links: rawLinks.map(normalizeLink).filter((link) => Boolean(link.url)),
     createdAt: group && group.createdAt ? group.createdAt : now,
     updatedAt: group && group.updatedAt ? group.updatedAt : now
@@ -151,7 +175,7 @@ function normalizeSpace(space) {
   return {
     id: space && space.id ? space.id : createId("space"),
     name: space && space.name ? space.name : "未命名空间",
-    icon: space && space.icon ? space.icon : "folder",
+    icon: space && space.icon && space.icon !== "folder" ? space.icon : getDefaultSpaceIcon(),
     groups: rawGroups.map(normalizeGroup),
     createdAt: space && space.createdAt ? space.createdAt : now,
     updatedAt: space && space.updatedAt ? space.updatedAt : now
@@ -191,7 +215,20 @@ function normalizeData(rawData) {
         deviceName: rawData.settings && rawData.settings.sync && rawData.settings.sync.deviceName ? rawData.settings.sync.deviceName : DEFAULT_SYNC_SETTINGS.deviceName,
         mode: rawData.settings && rawData.settings.sync && rawData.settings.sync.mode ? rawData.settings.sync.mode : DEFAULT_SYNC_SETTINGS.mode,
         lastBackupAt: rawData.settings && rawData.settings.sync && typeof rawData.settings.sync.lastBackupAt === "number" ? rawData.settings.sync.lastBackupAt : DEFAULT_SYNC_SETTINGS.lastBackupAt,
-        lastImportAt: rawData.settings && rawData.settings.sync && typeof rawData.settings.sync.lastImportAt === "number" ? rawData.settings.sync.lastImportAt : DEFAULT_SYNC_SETTINGS.lastImportAt
+        lastImportAt: rawData.settings && rawData.settings.sync && typeof rawData.settings.sync.lastImportAt === "number" ? rawData.settings.sync.lastImportAt : DEFAULT_SYNC_SETTINGS.lastImportAt,
+        provider: rawData.settings && rawData.settings.sync && rawData.settings.sync.provider ? rawData.settings.sync.provider : DEFAULT_SYNC_SETTINGS.provider,
+        webdavUrl: rawData.settings && rawData.settings.sync && rawData.settings.sync.webdavUrl ? rawData.settings.sync.webdavUrl : DEFAULT_SYNC_SETTINGS.webdavUrl,
+        webdavUsername: rawData.settings && rawData.settings.sync && rawData.settings.sync.webdavUsername ? rawData.settings.sync.webdavUsername : DEFAULT_SYNC_SETTINGS.webdavUsername,
+        webdavPassword: rawData.settings && rawData.settings.sync && rawData.settings.sync.webdavPassword ? rawData.settings.sync.webdavPassword : DEFAULT_SYNC_SETTINGS.webdavPassword,
+        webdavAutoSyncEnabled: Boolean(rawData.settings && rawData.settings.sync && rawData.settings.sync.webdavAutoSyncEnabled),
+        gistToken: rawData.settings && rawData.settings.sync && rawData.settings.sync.gistToken ? rawData.settings.sync.gistToken : DEFAULT_SYNC_SETTINGS.gistToken,
+        gistId: rawData.settings && rawData.settings.sync && rawData.settings.sync.gistId ? rawData.settings.sync.gistId : DEFAULT_SYNC_SETTINGS.gistId,
+        gistFilename: rawData.settings && rawData.settings.sync && rawData.settings.sync.gistFilename ? rawData.settings.sync.gistFilename : DEFAULT_SYNC_SETTINGS.gistFilename,
+        gistAutoSyncEnabled: Boolean(rawData.settings && rawData.settings.sync && rawData.settings.sync.gistAutoSyncEnabled),
+        autoSyncPendingAt: rawData.settings && rawData.settings.sync && typeof rawData.settings.sync.autoSyncPendingAt === "number" ? rawData.settings.sync.autoSyncPendingAt : DEFAULT_SYNC_SETTINGS.autoSyncPendingAt,
+        lastAutoSyncAt: rawData.settings && rawData.settings.sync && typeof rawData.settings.sync.lastAutoSyncAt === "number" ? rawData.settings.sync.lastAutoSyncAt : DEFAULT_SYNC_SETTINGS.lastAutoSyncAt,
+        lastAutoSyncError: rawData.settings && rawData.settings.sync && rawData.settings.sync.lastAutoSyncError ? rawData.settings.sync.lastAutoSyncError : DEFAULT_SYNC_SETTINGS.lastAutoSyncError,
+        lastSyncAt: rawData.settings && rawData.settings.sync && typeof rawData.settings.sync.lastSyncAt === "number" ? rawData.settings.sync.lastSyncAt : DEFAULT_SYNC_SETTINGS.lastSyncAt
       }
     }
   };
@@ -337,18 +374,85 @@ function filterGroups(groups, keyword) {
 }
 
 /**
+ * 根据关键词过滤当前窗口标签页。
+ *
+ * @param {Array<object>} tabs 当前窗口标签页数组。
+ * @param {string} keyword 搜索关键词。
+ * @returns {Array<object>} 匹配的当前标签页数组。
+ */
+function filterCurrentTabs(tabs, keyword) {
+  /** 统一小写后的搜索关键词。 */
+  const q = String(keyword || "").trim().toLowerCase();
+
+  if (!Array.isArray(tabs)) {
+    return [];
+  }
+
+  if (!q) {
+    return tabs;
+  }
+
+  return tabs.filter((tab) => {
+    /** 标签标题。 */
+    const title = tab && tab.title ? tab.title.toLowerCase() : "";
+    /** 标签 URL。 */
+    const url = tab && tab.url ? tab.url.toLowerCase() : "";
+
+    return title.includes(q) || url.includes(q);
+  });
+}
+
+/**
+ * 生成可备份的数据副本，并移除不应导出的敏感同步凭据。
+ *
+ * @param {object} data 当前全量数据。
+ * @returns {object} 去除敏感信息后的可备份数据。
+ */
+function createBackupSafeData(data) {
+  /** 标准化后的数据副本。 */
+  const backupData = ensureSyncSettings(normalizeData(data));
+
+  backupData.settings.sync.webdavPassword = "";
+  backupData.settings.sync.gistToken = "";
+  return backupData;
+}
+
+/**
+ * 标准化普通备份数据包，兼容旧版直接导出的数据结构。
+ *
+ * @param {object} parsedData 解析后的备份或全量数据对象。
+ * @returns {object} 待迁移的全量数据对象。
+ */
+function extractBackupData(parsedData) {
+  if (!parsedData || typeof parsedData !== "object") {
+    return parsedData;
+  }
+
+  if (parsedData.data && typeof parsedData.data === "object") {
+    return parsedData.data;
+  }
+
+  return parsedData;
+}
+
+/**
  * 导出当前数据为格式化 JSON 文本。
  *
  * @param {object} data 当前全量数据。
  * @returns {string} 可下载备份的 JSON 字符串。
  */
 function exportData(data) {
-  /** 导出前的标准化数据。 */
-  const normalizedData = normalizeData(data);
+  /** 导出前移除敏感同步凭据的数据。 */
+  const normalizedData = createBackupSafeData(data);
+  /** 当前时间戳。 */
+  const now = getCurrentTime();
 
   return JSON.stringify({
-    ...normalizedData,
-    exportedAt: getCurrentTime()
+    backupVersion: BACKUP_VERSION,
+    appVersion: APP_VERSION,
+    exportedAt: now,
+    deviceId: normalizedData.settings.sync.deviceId || "",
+    data: normalizedData
   }, null, 2);
 }
 
@@ -369,7 +473,7 @@ function importData(text) {
     throw new Error("导入文件不是有效的 JSON");
   }
 
-  return migrateData(parsedData);
+  return migrateData(extractBackupData(parsedData));
 }
 
 /**
@@ -574,6 +678,223 @@ function addLinksToGroup(data, spaceId, groupId, rawLinks) {
 }
 
 /**
+ * 比较两个业务对象的更新时间并返回更新的一方。
+ *
+ * @param {object} localItem 本地业务对象。
+ * @param {object} remoteItem 远端业务对象。
+ * @returns {object} 更新时间较新的业务对象。
+ */
+function pickNewerItem(localItem, remoteItem) {
+  /** 本地业务对象更新时间。 */
+  const localUpdatedAt = localItem && localItem.updatedAt ? localItem.updatedAt : localItem && localItem.createdAt ? localItem.createdAt : 0;
+  /** 远端业务对象更新时间。 */
+  const remoteUpdatedAt = remoteItem && remoteItem.updatedAt ? remoteItem.updatedAt : remoteItem && remoteItem.createdAt ? remoteItem.createdAt : 0;
+
+  return remoteUpdatedAt > localUpdatedAt ? remoteItem : localItem;
+}
+
+/**
+ * 合并两个链接列表，按 ID 和 URL 去重并优先保留较新的链接。
+ *
+ * @param {Array<object>} localLinks 本地链接列表。
+ * @param {Array<object>} remoteLinks 远端链接列表。
+ * @returns {Array<object>} 自动合并后的链接列表。
+ */
+function mergeLinks(localLinks, remoteLinks) {
+  /** 按链接 ID 记录的合并结果。 */
+  const linkById = new Map();
+  /** 合并输入链接到结果集合的内部函数。 */
+  const appendLink = (rawLink) => {
+    /** 标准化后的链接。 */
+    const link = normalizeLink(rawLink);
+    /** 已存在的同 ID 链接。 */
+    const existingLink = linkById.get(link.id);
+
+    linkById.set(link.id, existingLink ? pickNewerItem(existingLink, link) : link);
+  };
+
+  for (const link of Array.isArray(localLinks) ? localLinks : []) {
+    appendLink(link);
+  }
+
+  for (const link of Array.isArray(remoteLinks) ? remoteLinks : []) {
+    appendLink(link);
+  }
+
+  /** 按 URL 记录的合并结果。 */
+  const linkByUrl = new Map();
+
+  for (const link of linkById.values()) {
+    /** 已存在的同 URL 链接。 */
+    const existingLink = linkByUrl.get(link.url);
+
+    if (!existingLink) {
+      linkByUrl.set(link.url, link);
+      continue;
+    }
+
+    linkByUrl.set(link.url, pickNewerItem(existingLink, link));
+  }
+
+  return Array.from(linkByUrl.values()).sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0));
+}
+
+/**
+ * 合并同一个分组，保留两端链接并按较新元信息更新分组属性。
+ *
+ * @param {object} localGroup 本地分组。
+ * @param {object} remoteGroup 远端分组。
+ * @returns {object} 自动合并后的分组。
+ */
+function mergeGroup(localGroup, remoteGroup) {
+  /** 较新的分组元信息。 */
+  const newerGroup = pickNewerItem(localGroup, remoteGroup);
+  /** 本地分组链接列表。 */
+  const localLinks = localGroup && Array.isArray(localGroup.links) ? localGroup.links : [];
+  /** 远端分组链接列表。 */
+  const remoteLinks = remoteGroup && Array.isArray(remoteGroup.links) ? remoteGroup.links : [];
+  /** 自动合并后的分组。 */
+  const mergedGroup = normalizeGroup({
+    ...newerGroup,
+    links: mergeLinks(localLinks, remoteLinks)
+  });
+
+  mergedGroup.updatedAt = Math.max(localGroup && localGroup.updatedAt ? localGroup.updatedAt : 0, remoteGroup && remoteGroup.updatedAt ? remoteGroup.updatedAt : 0, mergedGroup.updatedAt || 0);
+  return mergedGroup;
+}
+
+/**
+ * 合并两个分组列表，按 ID 合并并保留两端独有分组。
+ *
+ * @param {Array<object>} localGroups 本地分组列表。
+ * @param {Array<object>} remoteGroups 远端分组列表。
+ * @returns {Array<object>} 自动合并后的分组列表。
+ */
+function mergeGroups(localGroups, remoteGroups) {
+  /** 分组 ID 的有序集合。 */
+  const groupIds = [];
+  /** 本地分组映射。 */
+  const localGroupById = new Map();
+  /** 远端分组映射。 */
+  const remoteGroupById = new Map();
+  /** 收集分组 ID 的内部函数。 */
+  const collectGroup = (group, targetMap) => {
+    if (!group || !group.id) {
+      return;
+    }
+
+    targetMap.set(group.id, group);
+
+    if (!groupIds.includes(group.id)) {
+      groupIds.push(group.id);
+    }
+  };
+
+  for (const group of Array.isArray(localGroups) ? localGroups : []) {
+    collectGroup(group, localGroupById);
+  }
+
+  for (const group of Array.isArray(remoteGroups) ? remoteGroups : []) {
+    collectGroup(group, remoteGroupById);
+  }
+
+  return groupIds.map((groupId) => mergeGroup(localGroupById.get(groupId), remoteGroupById.get(groupId)));
+}
+
+/**
+ * 合并同一个空间，保留两端分组并按较新元信息更新空间属性。
+ *
+ * @param {object} localSpace 本地空间。
+ * @param {object} remoteSpace 远端空间。
+ * @returns {object} 自动合并后的空间。
+ */
+function mergeSpace(localSpace, remoteSpace) {
+  /** 较新的空间元信息。 */
+  const newerSpace = pickNewerItem(localSpace, remoteSpace);
+  /** 本地空间分组列表。 */
+  const localGroups = localSpace && Array.isArray(localSpace.groups) ? localSpace.groups : [];
+  /** 远端空间分组列表。 */
+  const remoteGroups = remoteSpace && Array.isArray(remoteSpace.groups) ? remoteSpace.groups : [];
+  /** 自动合并后的空间。 */
+  const mergedSpace = normalizeSpace({
+    ...newerSpace,
+    groups: mergeGroups(localGroups, remoteGroups)
+  });
+
+  mergedSpace.updatedAt = Math.max(localSpace && localSpace.updatedAt ? localSpace.updatedAt : 0, remoteSpace && remoteSpace.updatedAt ? remoteSpace.updatedAt : 0, mergedSpace.updatedAt || 0);
+  return mergedSpace;
+}
+
+/**
+ * 合并两个空间列表，按 ID 合并并保留两端独有空间。
+ *
+ * @param {Array<object>} localSpaces 本地空间列表。
+ * @param {Array<object>} remoteSpaces 远端空间列表。
+ * @returns {Array<object>} 自动合并后的空间列表。
+ */
+function mergeSpaces(localSpaces, remoteSpaces) {
+  /** 空间 ID 的有序集合。 */
+  const spaceIds = [];
+  /** 本地空间映射。 */
+  const localSpaceById = new Map();
+  /** 远端空间映射。 */
+  const remoteSpaceById = new Map();
+  /** 收集空间 ID 的内部函数。 */
+  const collectSpace = (space, targetMap) => {
+    if (!space || !space.id) {
+      return;
+    }
+
+    targetMap.set(space.id, space);
+
+    if (!spaceIds.includes(space.id)) {
+      spaceIds.push(space.id);
+    }
+  };
+
+  for (const space of Array.isArray(localSpaces) ? localSpaces : []) {
+    collectSpace(space, localSpaceById);
+  }
+
+  for (const space of Array.isArray(remoteSpaces) ? remoteSpaces : []) {
+    collectSpace(space, remoteSpaceById);
+  }
+
+  return spaceIds.map((spaceId) => mergeSpace(localSpaceById.get(spaceId), remoteSpaceById.get(spaceId)));
+}
+
+/**
+ * 自动合并本地和远端工作台数据，优先保留两端数据避免同步丢失。
+ *
+ * @param {object} localData 本地当前全量数据。
+ * @param {object} remoteData 远端当前全量数据。
+ * @param {string} deviceId 当前设备 ID。
+ * @returns {object} 自动合并后的全量数据。
+ */
+function mergeWorkspaceData(localData, remoteData, deviceId) {
+  /** 标准化后的本地数据。 */
+  const normalizedLocalData = ensureSyncSettings(localData, deviceId);
+  /** 标准化后的远端数据。 */
+  const normalizedRemoteData = ensureSyncSettings(remoteData, normalizedLocalData.settings.sync.deviceId);
+  /** 自动合并后的空间列表。 */
+  const spaces = mergeSpaces(normalizedLocalData.spaces, normalizedRemoteData.spaces);
+  /** 合并后仍然存在的当前激活空间 ID。 */
+  const activeSpaceId = spaces.some((space) => space.id === normalizedLocalData.activeSpaceId) ? normalizedLocalData.activeSpaceId : spaces[0].id;
+  /** 合并后的全量数据。 */
+  const mergedData = ensureSyncSettings({
+    version: Math.max(normalizedLocalData.version || 1, normalizedRemoteData.version || 1),
+    activeSpaceId,
+    spaces,
+    settings: normalizedLocalData.settings
+  }, normalizedLocalData.settings.sync.deviceId);
+
+  mergedData.settings.sync = {
+    ...normalizedLocalData.settings.sync
+  };
+  return mergedData;
+}
+
+/**
  * 确保数据中包含完整的同步设置，缺失时用指定设备 ID 补齐。
  *
  * @param {object} data 当前全量数据。
@@ -591,7 +912,20 @@ function ensureSyncSettings(data, deviceId) {
     deviceName: nextData.settings.sync.deviceName || DEFAULT_SYNC_SETTINGS.deviceName,
     mode: nextData.settings.sync.mode || DEFAULT_SYNC_SETTINGS.mode,
     lastBackupAt: typeof nextData.settings.sync.lastBackupAt === "number" ? nextData.settings.sync.lastBackupAt : DEFAULT_SYNC_SETTINGS.lastBackupAt,
-    lastImportAt: typeof nextData.settings.sync.lastImportAt === "number" ? nextData.settings.sync.lastImportAt : DEFAULT_SYNC_SETTINGS.lastImportAt
+    lastImportAt: typeof nextData.settings.sync.lastImportAt === "number" ? nextData.settings.sync.lastImportAt : DEFAULT_SYNC_SETTINGS.lastImportAt,
+    provider: nextData.settings.sync.provider || DEFAULT_SYNC_SETTINGS.provider,
+    webdavUrl: nextData.settings.sync.webdavUrl || DEFAULT_SYNC_SETTINGS.webdavUrl,
+    webdavUsername: nextData.settings.sync.webdavUsername || DEFAULT_SYNC_SETTINGS.webdavUsername,
+    webdavPassword: nextData.settings.sync.webdavPassword || DEFAULT_SYNC_SETTINGS.webdavPassword,
+    webdavAutoSyncEnabled: Boolean(nextData.settings.sync.webdavAutoSyncEnabled),
+    gistToken: nextData.settings.sync.gistToken || DEFAULT_SYNC_SETTINGS.gistToken,
+    gistId: nextData.settings.sync.gistId || DEFAULT_SYNC_SETTINGS.gistId,
+    gistFilename: nextData.settings.sync.gistFilename || DEFAULT_SYNC_SETTINGS.gistFilename,
+    gistAutoSyncEnabled: Boolean(nextData.settings.sync.gistAutoSyncEnabled),
+    autoSyncPendingAt: typeof nextData.settings.sync.autoSyncPendingAt === "number" ? nextData.settings.sync.autoSyncPendingAt : DEFAULT_SYNC_SETTINGS.autoSyncPendingAt,
+    lastAutoSyncAt: typeof nextData.settings.sync.lastAutoSyncAt === "number" ? nextData.settings.sync.lastAutoSyncAt : DEFAULT_SYNC_SETTINGS.lastAutoSyncAt,
+    lastAutoSyncError: nextData.settings.sync.lastAutoSyncError || DEFAULT_SYNC_SETTINGS.lastAutoSyncError,
+    lastSyncAt: typeof nextData.settings.sync.lastSyncAt === "number" ? nextData.settings.sync.lastSyncAt : DEFAULT_SYNC_SETTINGS.lastSyncAt
   };
 
   return nextData;
@@ -626,6 +960,141 @@ function getDataUpdatedAt(data) {
   }
 
   return timestamps.length > 0 ? Math.max(...timestamps) : 0;
+}
+
+/**
+ * 将字节数组转换为 Base64 文本。
+ *
+ * @param {Uint8Array} bytes 待编码的字节数组。
+ * @returns {string} Base64 文本。
+ */
+function bytesToBase64(bytes) {
+  /** 每个字节转换得到的字符数组。 */
+  const chars = [];
+
+  for (const byte of bytes) {
+    chars.push(String.fromCharCode(byte));
+  }
+
+  return btoa(chars.join(""));
+}
+
+/**
+ * 将 Base64 文本转换为字节数组。
+ *
+ * @param {string} text Base64 文本。
+ * @returns {Uint8Array} 解码后的字节数组。
+ */
+function base64ToBytes(text) {
+  /** Base64 解码后的二进制字符串。 */
+  const binary = atob(text);
+  /** 解码后的字节数组。 */
+  const bytes = new Uint8Array(binary.length);
+
+  for (let i = 0; i < binary.length; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+
+  return bytes;
+}
+
+/**
+ * 使用 PBKDF2 从密码和盐值派生 AES-GCM 密钥。
+ *
+ * @param {string} password 用户输入的加密密码。
+ * @param {Uint8Array} salt 随机盐值。
+ * @param {number} iterations PBKDF2 迭代次数。
+ * @returns {Promise<CryptoKey>} AES-GCM 加解密密钥。
+ */
+async function deriveAesKey(password, salt, iterations) {
+  /** 密码原始密钥材料。 */
+  const keyMaterial = await crypto.subtle.importKey(
+    "raw",
+    new TextEncoder().encode(password),
+    "PBKDF2",
+    false,
+    ["deriveKey"]
+  );
+
+  return crypto.subtle.deriveKey(
+    {
+      name: "PBKDF2",
+      salt,
+      iterations,
+      hash: "SHA-256"
+    },
+    keyMaterial,
+    {
+      name: "AES-GCM",
+      length: 256
+    },
+    false,
+    ["encrypt", "decrypt"]
+  );
+}
+
+/**
+ * 使用 AES-GCM 加密明文。
+ *
+ * @param {string} plaintext 明文 JSON 字符串。
+ * @param {string} password 用户输入的加密密码。
+ * @returns {Promise<object>} 加密参数和密文。
+ */
+async function aesGcmEncrypt(plaintext, password) {
+  /** PBKDF2 迭代次数。 */
+  const iterations = 120000;
+  /** 随机盐值。 */
+  const salt = crypto.getRandomValues(new Uint8Array(16));
+  /** AES-GCM 随机初始化向量。 */
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  /** AES-GCM 密钥。 */
+  const key = await deriveAesKey(password, salt, iterations);
+  /** 加密后的密文字节。 */
+  const cipherBuffer = await crypto.subtle.encrypt(
+    {
+      name: "AES-GCM",
+      iv
+    },
+    key,
+    new TextEncoder().encode(plaintext)
+  );
+
+  return {
+    algorithm: "PBKDF2-SHA256-AES-GCM",
+    iterations,
+    salt: bytesToBase64(salt),
+    iv: bytesToBase64(iv),
+    payload: bytesToBase64(new Uint8Array(cipherBuffer))
+  };
+}
+
+/**
+ * 使用 AES-GCM 解密密文。
+ *
+ * @param {object} encryptedData 加密参数和密文。
+ * @param {string} password 用户输入的解密密码。
+ * @returns {Promise<string>} 解密后的明文 JSON 字符串。
+ */
+async function aesGcmDecrypt(encryptedData, password) {
+  /** 随机盐值。 */
+  const salt = base64ToBytes(encryptedData.salt);
+  /** AES-GCM 初始化向量。 */
+  const iv = base64ToBytes(encryptedData.iv);
+  /** AES-GCM 密钥。 */
+  const key = await deriveAesKey(password, salt, encryptedData.iterations);
+  /** 密文字节。 */
+  const cipherBytes = base64ToBytes(encryptedData.payload);
+  /** 解密后的明文字节。 */
+  const plainBuffer = await crypto.subtle.decrypt(
+    {
+      name: "AES-GCM",
+      iv
+    },
+    key,
+    cipherBytes
+  );
+
+  return new TextDecoder().decode(plainBuffer);
 }
 
 /**
@@ -702,23 +1171,41 @@ async function xorDecrypt(cipherBase64, password) {
  * @param {string} password 加密密码。
  * @param {string} deviceId 当前设备 ID。
  * @returns {Promise<string>} 加密备份 JSON 文本。
+ * @throws {Error} 当密码为空时抛出错误。
  */
 async function createEncryptedBackup(data, password, deviceId) {
-  /** 标准化后的数据。 */
-  const normalizedData = normalizeData(data);
-  /** 数据部分的 JSON 文本。 */
-  const dataText = JSON.stringify(normalizedData);
-  /** 加密后的 Base64 密文。 */
-  const payload = await xorEncrypt(dataText, password);
+  if (!password) {
+    throw new Error("请输入加密密码");
+  }
+
+  /** 标准化并移除敏感同步凭据后的数据。 */
+  const normalizedData = createBackupSafeData(data);
   /** 当前时间戳。 */
   const now = getCurrentTime();
-
-  return JSON.stringify({
+  /** 当前设备 ID。 */
+  const currentDeviceId = deviceId || normalizedData.settings.sync.deviceId || "";
+  /** 加密前的备份包明文。 */
+  const dataText = JSON.stringify({
     backupVersion: BACKUP_VERSION,
     appVersion: APP_VERSION,
     exportedAt: now,
-    deviceId: deviceId || "",
-    payload
+    deviceId: currentDeviceId,
+    data: normalizedData
+  });
+  /** AES-GCM 加密结果。 */
+  const encryptedData = await aesGcmEncrypt(dataText, password);
+
+  return JSON.stringify({
+    encrypted: true,
+    backupVersion: BACKUP_VERSION,
+    appVersion: APP_VERSION,
+    exportedAt: now,
+    deviceId: currentDeviceId,
+    encryption: encryptedData.algorithm,
+    iterations: encryptedData.iterations,
+    salt: encryptedData.salt,
+    iv: encryptedData.iv,
+    payload: encryptedData.payload
   }, null, 2);
 }
 
@@ -731,6 +1218,10 @@ async function createEncryptedBackup(data, password, deviceId) {
  * @throws {Error} 当密码错误或文件损坏时抛出错误。
  */
 async function restoreEncryptedBackup(text, password) {
+  if (!password) {
+    throw new Error("请输入解密密码");
+  }
+
   /** 解析后的备份对象。 */
   let backupData = null;
 
@@ -748,7 +1239,9 @@ async function restoreEncryptedBackup(text, password) {
   let plainText = "";
 
   try {
-    plainText = await xorDecrypt(backupData.payload, password);
+    plainText = backupData.encryption === "PBKDF2-SHA256-AES-GCM"
+      ? await aesGcmDecrypt(backupData, password)
+      : await xorDecrypt(backupData.payload, password);
   } catch (error) {
     throw new Error("密码错误或文件损坏");
   }
@@ -762,7 +1255,7 @@ async function restoreEncryptedBackup(text, password) {
     throw new Error("密码错误或文件损坏");
   }
 
-  return migrateData(decryptedData);
+  return migrateData(extractBackupData(decryptedData));
 }
 
 /**
@@ -804,34 +1297,45 @@ function clearAllData() {
   return createDefaultData();
 }
 
+const tabdeskCoreApi = {
+  STORAGE_KEY,
+  DEFAULT_SPACE_ID,
+  APP_VERSION,
+  BACKUP_VERSION,
+  createDefaultData,
+  normalizeData,
+  migrateData,
+  createId,
+  createDeviceId,
+  ensureSyncSettings,
+  getDataUpdatedAt,
+  mergeWorkspaceData,
+  createEncryptedBackup,
+  restoreEncryptedBackup,
+  xorEncrypt,
+  detectImportConflict,
+  isValidTabUrl,
+  dedupeTabsByUrl,
+  filterValidTabs,
+  tabsToLinks,
+  filterGroups,
+  filterCurrentTabs,
+  exportData,
+  importData,
+  extractBackupData,
+  createBackupSafeData,
+  moveArrayItem,
+  reorderSpaces,
+  reorderGroups,
+  reorderLinks,
+  moveLinkBetweenGroups,
+  addLinksToGroup,
+  clearAllData
+};
+
 if (typeof module !== "undefined") {
-  module.exports = {
-    STORAGE_KEY,
-    DEFAULT_SPACE_ID,
-    APP_VERSION,
-    BACKUP_VERSION,
-    createDefaultData,
-    normalizeData,
-    migrateData,
-    createDeviceId,
-    ensureSyncSettings,
-    getDataUpdatedAt,
-    createEncryptedBackup,
-    restoreEncryptedBackup,
-    detectImportConflict,
-    isValidTabUrl,
-    dedupeTabsByUrl,
-    filterValidTabs,
-    tabsToLinks,
-    filterGroups,
-    exportData,
-    importData,
-    moveArrayItem,
-    reorderSpaces,
-    reorderGroups,
-    reorderLinks,
-    moveLinkBetweenGroups,
-    addLinksToGroup,
-    clearAllData
-  };
+  module.exports = tabdeskCoreApi;
+} else {
+  root.MyTabDeskCore = tabdeskCoreApi;
 }
+})(typeof globalThis !== "undefined" ? globalThis : window);
