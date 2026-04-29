@@ -45,6 +45,11 @@ const DEFAULT_SYNC_SETTINGS = {
 const DEFAULT_WEBDAV_SYNC_FILENAME = "MyTabDesk.json";
 
 /**
+ * GitHub Gist 默认同步描述，用于自动发现 MyTabDesk 同步 Gist。
+ */
+const DEFAULT_GIST_SYNC_DESCRIPTION = "MyTabDesk Sync";
+
+/**
  * 默认空间 ID，用于初始化数据和清空数据后的兜底空间。
  */
 const DEFAULT_SPACE_ID = "default-space";
@@ -91,6 +96,108 @@ function resolveWebDavSyncUrl(webdavUrl, customFilename) {
   /** 移除尾部斜杠后的目录地址。 */
   const directoryUrl = normalizedUrl.replace(/\/+$/, "");
   return `${directoryUrl}/${filename}`;
+}
+
+/**
+ * 解析并校验安全的 WebDAV 同步文件地址。
+ *
+ * @param {object} sync 同步配置。
+ * @returns {string} 已解析并通过安全校验的 WebDAV 文件地址。
+ * @throws {Error} 当 WebDAV 配置不完整或地址不是 HTTPS 时抛出错误。
+ */
+function resolveSafeWebDavFileUrl(sync) {
+  if (!sync || !sync.webdavUrl || !sync.webdavUsername || !sync.webdavPassword) {
+    throw new Error("请先完整填写 WebDAV URL、用户名和密码");
+  }
+
+  /** 解析后的 WebDAV 同步文件地址。 */
+  const fileUrl = resolveWebDavSyncUrl(sync.webdavUrl, sync.webdavFilename);
+
+  if (!fileUrl.startsWith("https://")) {
+    throw new Error("WebDAV 地址必须使用 HTTPS 协议，以确保凭证传输安全");
+  }
+
+  return fileUrl;
+}
+
+/**
+ * 创建 Basic Auth 请求头。
+ *
+ * @param {string} username 用户名。
+ * @param {string} password 密码。
+ * @returns {string} Basic Auth 请求头值。
+ */
+function createBasicAuthHeader(username, password) {
+  /** UTF-8 编码后的凭证文本。 */
+  const credentialText = `${username}:${password}`;
+
+  if (typeof Buffer !== "undefined") {
+    return `Basic ${Buffer.from(credentialText, "utf8").toString("base64")}`;
+  }
+
+  return `Basic ${btoa(unescape(encodeURIComponent(credentialText)))}`;
+}
+
+/**
+ * 判断指定同步服务是否已启用。
+ *
+ * @param {object} sync 同步配置。
+ * @param {string} provider 同步服务商，支持 webdav 和 gist。
+ * @returns {boolean} 已启用时返回 true。
+ */
+function isSyncProviderEnabled(sync, provider) {
+  if (!sync || !provider) {
+    return false;
+  }
+
+  if (provider === "webdav") {
+    return sync.provider === "webdav" || sync.provider === "both";
+  }
+
+  if (provider === "gist") {
+    return sync.provider === "gist" || sync.provider === "both";
+  }
+
+  return false;
+}
+
+/**
+ * 获取已启用的同步服务商列表。
+ *
+ * @param {object} sync 同步配置。
+ * @returns {string[]} 已启用的同步服务商列表。
+ */
+function getEnabledSyncProviders(sync) {
+  /** 已启用的同步服务商列表。 */
+  const providers = [];
+
+  if (isSyncProviderEnabled(sync, "webdav")) {
+    providers.push("webdav");
+  }
+
+  if (isSyncProviderEnabled(sync, "gist")) {
+    providers.push("gist");
+  }
+
+  return providers;
+}
+
+/**
+ * 判断 GitHub Gist 是否为 MyTabDesk 同步 Gist。
+ *
+ * @param {object} gist GitHub Gist 摘要对象。
+ * @param {string} filename 同步文件名。
+ * @returns {boolean} 匹配 MyTabDesk 同步 Gist 时返回 true。
+ */
+function isMyTabDeskGist(gist, filename) {
+  /** 最终用于匹配的同步文件名。 */
+  const finalFilename = filename || DEFAULT_SYNC_SETTINGS.gistFilename;
+  /** Gist 描述文本。 */
+  const description = gist && gist.description ? gist.description.trim() : "";
+  /** Gist 文件集合。 */
+  const files = gist && gist.files ? gist.files : {};
+
+  return description === DEFAULT_GIST_SYNC_DESCRIPTION || Boolean(files[finalFilename]);
 }
 
 /**
@@ -1563,6 +1670,7 @@ const tabdeskCoreApi = {
   APP_VERSION,
   BACKUP_VERSION,
   DEFAULT_WEBDAV_SYNC_FILENAME,
+  DEFAULT_GIST_SYNC_DESCRIPTION,
   createDefaultData,
   normalizeData,
   migrateData,
@@ -1570,6 +1678,11 @@ const tabdeskCoreApi = {
   createDeviceId,
   getCurrentTime,
   resolveWebDavSyncUrl,
+  resolveSafeWebDavFileUrl,
+  createBasicAuthHeader,
+  isSyncProviderEnabled,
+  getEnabledSyncProviders,
+  isMyTabDeskGist,
   ensureSyncSettings,
   getDataUpdatedAt,
   mergeWorkspaceData,

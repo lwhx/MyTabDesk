@@ -22,6 +22,11 @@ const {
   createDeviceId,
   getCurrentTime,
   resolveWebDavSyncUrl,
+  resolveSafeWebDavFileUrl,
+  createBasicAuthHeader,
+  isSyncProviderEnabled,
+  getEnabledSyncProviders,
+  isMyTabDeskGist,
   ensureSyncSettings,
   getDataUpdatedAt,
   mergeWorkspaceData,
@@ -316,6 +321,173 @@ function testResolveWebDavSyncUrlReturnsEmptyForEmptyInput() {
   assert.equal(resolveWebDavSyncUrl(""), "");
   assert.equal(resolveWebDavSyncUrl(null), "");
   assert.equal(resolveWebDavSyncUrl(undefined), "");
+}
+
+/**
+ * 测试安全 WebDAV 文件地址会拒绝空配置。
+ *
+ * @returns {void}
+ */
+function testResolveSafeWebDavFileUrlRejectsMissingConfig() {
+  assert.throws(
+    () => resolveSafeWebDavFileUrl({ webdavUrl: "", webdavUsername: "user", webdavPassword: "pass" }),
+    /请先完整填写 WebDAV URL、用户名和密码/
+  );
+}
+
+/**
+ * 测试安全 WebDAV 文件地址会拒绝非 HTTPS 地址。
+ *
+ * @returns {void}
+ */
+function testResolveSafeWebDavFileUrlRejectsInsecureUrl() {
+  assert.throws(
+    () => resolveSafeWebDavFileUrl({ webdavUrl: "http://example.com/dav", webdavUsername: "user", webdavPassword: "pass" }),
+    /WebDAV 地址必须使用 HTTPS 协议/
+  );
+}
+
+/**
+ * 测试安全 WebDAV 文件地址会返回已解析的 HTTPS 地址。
+ *
+ * @returns {void}
+ */
+function testResolveSafeWebDavFileUrlReturnsResolvedHttpsUrl() {
+  /** 解析后的安全 WebDAV 文件地址。 */
+  const fileUrl = resolveSafeWebDavFileUrl({
+    webdavUrl: "https://example.com/dav/folder",
+    webdavUsername: "user",
+    webdavPassword: "pass",
+    webdavFilename: "Backup.json"
+  });
+
+  assert.equal(fileUrl, "https://example.com/dav/folder/Backup.json");
+}
+
+/**
+ * 测试 Basic Auth 请求头会使用 UTF-8 生成 Base64 凭证。
+ *
+ * @returns {void}
+ */
+function testCreateBasicAuthHeaderUsesUtf8Credentials() {
+  assert.equal(createBasicAuthHeader("用户", "密码"), "Basic 55So5oi3OuWvhueggQ==");
+}
+
+/**
+ * 测试同步服务启用判断支持 WebDAV 和 Gist 同时开启。
+ *
+ * @returns {void}
+ */
+function testIsSyncProviderEnabledSupportsBothProviders() {
+  /** 同时启用两个同步服务的同步配置。 */
+  const sync = {
+    provider: "both",
+    webdavAutoSyncEnabled: true,
+    gistAutoSyncEnabled: true
+  };
+
+  assert.equal(isSyncProviderEnabled(sync, "webdav"), true);
+  assert.equal(isSyncProviderEnabled(sync, "gist"), true);
+}
+
+/**
+ * 测试自动同步开关不会单独开启同步服务。
+ *
+ * @returns {void}
+ */
+function testIsSyncProviderEnabledIgnoresAutoSyncOnly() {
+  /** 仅开启自动同步但未启用服务的同步配置。 */
+  const sync = {
+    provider: "none",
+    webdavAutoSyncEnabled: true,
+    gistAutoSyncEnabled: true
+  };
+
+  assert.equal(isSyncProviderEnabled(sync, "webdav"), false);
+  assert.equal(isSyncProviderEnabled(sync, "gist"), false);
+  assert.deepEqual(getEnabledSyncProviders(sync), []);
+}
+
+/**
+ * 测试获取已启用同步服务会同时返回 WebDAV 和 Gist。
+ *
+ * @returns {void}
+ */
+function testGetEnabledSyncProvidersReturnsBothProviders() {
+  /** 同时启用两个同步服务的同步配置。 */
+  const sync = {
+    provider: "both",
+    webdavAutoSyncEnabled: true,
+    gistAutoSyncEnabled: true
+  };
+
+  assert.deepEqual(getEnabledSyncProviders(sync), ["webdav", "gist"]);
+}
+
+/**
+ * 测试旧版单 provider 配置仍会被识别为启用。
+ *
+ * @returns {void}
+ */
+function testIsSyncProviderEnabledKeepsLegacyProvider() {
+  /** 旧版单服务同步配置。 */
+  const sync = {
+    provider: "webdav",
+    webdavAutoSyncEnabled: false,
+    gistAutoSyncEnabled: false
+  };
+
+  assert.equal(isSyncProviderEnabled(sync, "webdav"), true);
+  assert.deepEqual(getEnabledSyncProviders(sync), ["webdav"]);
+}
+
+/**
+ * 测试 Gist 描述匹配时会识别为 MyTabDesk 同步 Gist。
+ *
+ * @returns {void}
+ */
+function testIsMyTabDeskGistMatchesDescription() {
+  /** GitHub Gist 摘要对象。 */
+  const gist = {
+    description: "MyTabDesk Sync",
+    files: {}
+  };
+
+  assert.equal(isMyTabDeskGist(gist, "mytabdesk-sync.json"), true);
+}
+
+/**
+ * 测试 Gist 文件名匹配时会识别为 MyTabDesk 同步 Gist。
+ *
+ * @returns {void}
+ */
+function testIsMyTabDeskGistMatchesFilename() {
+  /** GitHub Gist 摘要对象。 */
+  const gist = {
+    description: "其他描述",
+    files: {
+      "mytabdesk-sync.json": {}
+    }
+  };
+
+  assert.equal(isMyTabDeskGist(gist, "mytabdesk-sync.json"), true);
+}
+
+/**
+ * 测试无关 Gist 不会识别为 MyTabDesk 同步 Gist。
+ *
+ * @returns {void}
+ */
+function testIsMyTabDeskGistRejectsUnrelatedGist() {
+  /** GitHub Gist 摘要对象。 */
+  const gist = {
+    description: "其他描述",
+    files: {
+      "notes.txt": {}
+    }
+  };
+
+  assert.equal(isMyTabDeskGist(gist, "mytabdesk-sync.json"), false);
 }
 
 /**
@@ -1335,6 +1507,17 @@ async function runTests() {
   testResolveWebDavSyncUrlKeepsJsonFileName();
   testResolveWebDavSyncUrlKeepsJsonFileNameWithCustomName();
   testResolveWebDavSyncUrlReturnsEmptyForEmptyInput();
+  testResolveSafeWebDavFileUrlRejectsMissingConfig();
+  testResolveSafeWebDavFileUrlRejectsInsecureUrl();
+  testResolveSafeWebDavFileUrlReturnsResolvedHttpsUrl();
+  testCreateBasicAuthHeaderUsesUtf8Credentials();
+  testIsSyncProviderEnabledSupportsBothProviders();
+  testIsSyncProviderEnabledIgnoresAutoSyncOnly();
+  testGetEnabledSyncProvidersReturnsBothProviders();
+  testIsSyncProviderEnabledKeepsLegacyProvider();
+  testIsMyTabDeskGistMatchesDescription();
+  testIsMyTabDeskGistMatchesFilename();
+  testIsMyTabDeskGistRejectsUnrelatedGist();
   testEnsureSyncSettingsAddsDefaults();
   testEnsureSyncSettingsKeepsAutoSyncOptions();
   testGetDataUpdatedAtReturnsLatestTimestamp();

@@ -8,7 +8,11 @@ const {
   migrateData,
   createId,
   getCurrentTime,
-  resolveWebDavSyncUrl,
+  resolveSafeWebDavFileUrl,
+  createBasicAuthHeader,
+  isSyncProviderEnabled,
+  getEnabledSyncProviders,
+  isMyTabDeskGist,
   ensureSyncSettings,
   getDataUpdatedAt,
   mergeWorkspaceData,
@@ -175,7 +179,7 @@ function isAutoSyncEnabled(sync) {
     return false;
   }
 
-  return sync.provider === "webdav" && sync.webdavAutoSyncEnabled || sync.provider === "gist" && sync.gistAutoSyncEnabled;
+  return isSyncProviderEnabled(sync, "webdav") && sync.webdavAutoSyncEnabled || isSyncProviderEnabled(sync, "gist") && sync.gistAutoSyncEnabled;
 }
 
 /**
@@ -2479,21 +2483,23 @@ function renderSettingsStatus() {
   const updatedAt = getDataUpdatedAt(state.data);
   /** 当前数据统计信息。 */
   const summary = getDataSummary(state.data);
-  /** 当前同步服务商。 */
-  const provider = sync.provider || "none";
+  /** 已启用同步服务商列表。 */
+  const enabledProviders = getEnabledSyncProviders(sync);
+  /** 已启用同步服务商显示文本。 */
+  const enabledProviderText = enabledProviders.length > 0 ? enabledProviders.join(" + ") : "未启用";
 
   elements.settingsVersionValue.textContent = state.data.version || "-";
   elements.settingsSpaceCountValue.textContent = summary.spaceCount;
   elements.settingsGroupCountValue.textContent = summary.groupCount;
   elements.settingsLinkCountValue.textContent = summary.linkCount;
-  elements.syncModeValue.textContent = provider !== "none" ? `手动同步：${provider}` : "手动同步基础版";
+  elements.syncModeValue.textContent = enabledProviders.length > 0 ? `远程同步：${enabledProviderText}` : "手动同步基础版";
   elements.syncDeviceIdValue.textContent = sync.deviceId || "-";
   elements.syncLastModifiedValue.textContent = updatedAt > 0 ? formatDateTime(updatedAt) : "-";
   elements.syncLastBackupValue.textContent = sync.lastBackupAt > 0 ? formatDateTime(sync.lastBackupAt) : "从未备份";
   elements.syncLastImportValue.textContent = sync.lastImportAt > 0 ? formatDateTime(sync.lastImportAt) : sync.lastSyncAt > 0 ? `最近同步 ${formatDateTime(sync.lastSyncAt)}` : "从未导入";
   elements.syncAutoStatusValue.textContent = getAutoSyncStatusText(sync);
-  elements.gistSyncSwitch.checked = provider === "gist";
-  elements.webdavSyncSwitch.checked = provider === "webdav";
+  elements.gistSyncSwitch.checked = isSyncProviderEnabled(sync, "gist");
+  elements.webdavSyncSwitch.checked = isSyncProviderEnabled(sync, "webdav");
   elements.gistAutoSyncSwitch.checked = Boolean(sync.gistAutoSyncEnabled);
   elements.webdavAutoSyncSwitch.checked = Boolean(sync.webdavAutoSyncEnabled);
   elements.webdavUrlInput.value = sync.webdavUrl || "";
@@ -2630,8 +2636,12 @@ async function importEncryptedBackupFile(event) {
  * @returns {object} 表单中的同步配置对象。
  */
 function readSyncSettingsForm() {
-  /** 表单中选中的同步服务商。 */
-  const provider = elements.webdavSyncSwitch.checked ? "webdav" : elements.gistSyncSwitch.checked ? "gist" : "none";
+  /** 是否启用 WebDAV 同步。 */
+  const webdavEnabled = elements.webdavSyncSwitch.checked;
+  /** 是否启用 GitHub Gist 同步。 */
+  const gistEnabled = elements.gistSyncSwitch.checked;
+  /** 兼容旧数据结构的主同步服务商。 */
+  const provider = webdavEnabled && gistEnabled ? "both" : webdavEnabled ? "webdav" : gistEnabled ? "gist" : "none";
 
   return {
     provider,
@@ -2672,9 +2682,7 @@ async function saveSyncSettingsFromForm() {
 function selectSyncProvider(provider) {
   if (provider === "gist") {
     elements.gistSyncSwitch.checked = true;
-    elements.webdavSyncSwitch.checked = false;
   } else if (provider === "webdav") {
-    elements.gistSyncSwitch.checked = false;
     elements.webdavSyncSwitch.checked = true;
   } else {
     elements.gistSyncSwitch.checked = false;
@@ -2710,18 +2718,23 @@ function createSyncPayload() {
 async function uploadAutoSync(sync) {
   /** 自动同步备份文本。 */
   const payload = createSyncPayload();
+  /** 已启用的同步服务商列表。 */
+  const providers = getEnabledSyncProviders(sync);
 
-  if (sync.provider === "webdav") {
-    await uploadWebDav(sync, payload);
-    return;
-  }
+  for (const provider of providers) {
+    validateSyncProviderSettings(sync, provider);
 
-  /** 上传后返回的 Gist ID。 */
-  const gistId = await uploadGist(sync, payload);
-  state.data.settings.sync.gistId = gistId;
+    if (provider === "webdav") {
+      await uploadWebDav(sync, payload);
+    } else {
+      /** 上传后返回的 Gist ID。 */
+      const gistId = await uploadGist(sync, payload);
+      state.data.settings.sync.gistId = gistId;
 
-  if (elements.gistIdInput) {
-    elements.gistIdInput.value = gistId;
+      if (elements.gistIdInput) {
+        elements.gistIdInput.value = gistId;
+      }
+    }
   }
 }
 
@@ -2729,12 +2742,13 @@ async function uploadAutoSync(sync) {
  * 从当前远程服务商下载云端同步数据。
  *
  * @param {object} sync 当前同步配置。
+ * @param {string} provider 需要下载的同步服务商。
  * @returns {Promise<object|null>} 解析后的远端数据，远端不存在时返回 null。
  */
-async function downloadRemoteSyncData(sync) {
+async function downloadRemoteSyncData(sync, provider) {
   try {
     /** 云端备份文本。 */
-    const payload = sync.provider === "webdav" ? await downloadWebDav(sync) : await downloadGist(sync);
+    const payload = provider === "webdav" ? await downloadWebDav(sync) : await downloadGist(sync);
     return importData(payload);
   } catch (error) {
     /** 错误消息文本。 */
@@ -2770,22 +2784,34 @@ function markSyncCompleted(sync, syncedAt) {
  * 执行一次自动双向同步，先拉取远端数据，再自动合并并上传合并结果。
  *
  * @param {object} sync 当前同步配置。
+ * @param {string} provider 需要执行双向同步的同步服务商。
  * @returns {Promise<void>} 同步完成后结束。
  */
-async function runBidirectionalSync(sync) {
+async function runBidirectionalSync(sync, provider) {
   /** 本地同步配置副本。 */
   const localSync = Object.assign({}, state.data.settings.sync);
   /** 远端工作台数据。 */
-  const remoteData = await downloadRemoteSyncData(sync);
+  const remoteData = await downloadRemoteSyncData(sync, provider);
 
   if (remoteData) {
     state.data = mergeWorkspaceData(state.data, remoteData, localSync.deviceId);
     Object.assign(state.data.settings.sync, localSync, {
-      provider: sync.provider
+      provider
     });
   }
 
-  await uploadAutoSync(state.data.settings.sync);
+  if (provider === "webdav") {
+    await uploadWebDav(state.data.settings.sync, createSyncPayload());
+  } else {
+    /** 上传后返回的 Gist ID。 */
+    const gistId = await uploadGist(state.data.settings.sync, createSyncPayload());
+    state.data.settings.sync.gistId = gistId;
+
+    if (elements.gistIdInput) {
+      elements.gistIdInput.value = gistId;
+    }
+  }
+
   markSyncCompleted(state.data.settings.sync, getCurrentTime());
   state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
   await saveData({ skipAutoSync: true });
@@ -2842,6 +2868,30 @@ function scheduleAutoSync() {
 }
 
 /**
+ * 校验指定同步服务商配置。
+ *
+ * @param {object} sync 当前同步配置。
+ * @param {string} provider 需要校验的同步服务商。
+ * @returns {void} 校验通过后结束。
+ * @throws {Error} 当同步配置不完整时抛出错误。
+ */
+function validateSyncProviderSettings(sync, provider) {
+  if (provider === "webdav") {
+    resolveSafeWebDavFileUrl(sync);
+    return;
+  }
+
+  if (provider === "gist") {
+    if (!sync.gistToken) {
+      throw new Error("请先填写 GitHub Gist Token。");
+    }
+    return;
+  }
+
+  throw new Error("请先选择 WebDAV 或 GitHub Gist 同步方式。");
+}
+
+/**
  * 校验当前同步服务商配置。
  *
  * @returns {object} 当前同步配置。
@@ -2850,20 +2900,49 @@ function scheduleAutoSync() {
 function validateSyncSettings() {
   /** 当前同步配置。 */
   const sync = state.data.settings.sync || {};
+  /** 已启用的同步服务商列表。 */
+  const providers = getEnabledSyncProviders(sync);
 
-  if (sync.provider === "webdav") {
-    if (!sync.webdavUrl || !sync.webdavUsername || !sync.webdavPassword) {
-      throw new Error("请先完整填写 WebDAV 地址、用户名和密码。");
-    }
-  } else if (sync.provider === "gist") {
-    if (!sync.gistToken) {
-      throw new Error("请先填写 GitHub Gist Token。");
-    }
-  } else {
+  if (providers.length === 0) {
     throw new Error("请先选择 WebDAV 或 GitHub Gist 同步方式。");
   }
 
+  for (const provider of providers) {
+    validateSyncProviderSettings(sync, provider);
+  }
+
   return sync;
+}
+
+/**
+ * 执行带超时控制的网络请求。
+ *
+ * @param {string} url 请求地址。
+ * @param {object} options fetch 请求选项。
+ * @returns {Promise<Response>} fetch 响应对象。
+ * @throws {Error} 当请求超时时抛出错误。
+ */
+async function fetchWithTimeout(url, options) {
+  /** 超时控制器。 */
+  const controller = new AbortController();
+  /** 合并后的请求选项。 */
+  const requestOptions = {
+    ...options,
+    signal: controller.signal
+  };
+  /** 超时定时器。 */
+  const timeoutId = setTimeout(() => controller.abort(), 30000);
+
+  try {
+    return await fetch(url, requestOptions);
+  } catch (error) {
+    if (error.name === "AbortError") {
+      throw new Error("远程同步请求超时，请检查网络连接");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
 }
 
 /**
@@ -2876,12 +2955,12 @@ function validateSyncSettings() {
  */
 async function uploadWebDav(sync, payload) {
   /** 解析后的 WebDAV 同步文件地址。 */
-  const fileUrl = resolveWebDavSyncUrl(sync.webdavUrl, sync.webdavFilename);
+  const fileUrl = resolveSafeWebDavFileUrl(sync);
   /** WebDAV 上传响应。 */
-  const response = await fetch(fileUrl, {
+  const response = await fetchWithTimeout(fileUrl, {
     method: "PUT",
     headers: {
-      Authorization: `Basic ${btoa(`${sync.webdavUsername}:${sync.webdavPassword}`)}`,
+      Authorization: createBasicAuthHeader(sync.webdavUsername, sync.webdavPassword),
       "Content-Type": "application/json;charset=utf-8"
     },
     body: payload
@@ -2901,12 +2980,12 @@ async function uploadWebDav(sync, payload) {
  */
 async function downloadWebDav(sync) {
   /** 解析后的 WebDAV 同步文件地址。 */
-  const fileUrl = resolveWebDavSyncUrl(sync.webdavUrl, sync.webdavFilename);
+  const fileUrl = resolveSafeWebDavFileUrl(sync);
   /** WebDAV 下载响应。 */
-  const response = await fetch(fileUrl, {
+  const response = await fetchWithTimeout(fileUrl, {
     method: "GET",
     headers: {
-      Authorization: `Basic ${btoa(`${sync.webdavUsername}:${sync.webdavPassword}`)}`
+      Authorization: createBasicAuthHeader(sync.webdavUsername, sync.webdavPassword)
     }
   });
 
@@ -2918,7 +2997,7 @@ async function downloadWebDav(sync) {
 }
 
 /**
- * 上传备份文本到 GitHub Gist。
+ * 上传备份文本到 GitHub Gist，未填写 Gist ID 时自动查找或创建。
  *
  * @param {object} sync 同步配置。
  * @param {string} payload 待上传的备份文本。
@@ -2928,18 +3007,34 @@ async function downloadWebDav(sync) {
 async function uploadGist(sync, payload) {
   /** Gist 文件名。 */
   const filename = sync.gistFilename || "mytabdesk-sync.json";
+  /** 最终使用的 Gist ID。 */
+  let gistId = sync.gistId;
+  /** 是否为新创建的 Gist。 */
+  let isNewGist = false;
+
+  if (!gistId) {
+    /** 自动查找到的 MyTabDesk Gist。 */
+    const foundGist = await findMyTabDeskGist(sync);
+
+    if (foundGist) {
+      gistId = foundGist.id;
+    } else {
+      isNewGist = true;
+    }
+  }
+
   /** Gist 请求地址。 */
-  const url = sync.gistId ? `https://api.github.com/gists/${sync.gistId}` : "https://api.github.com/gists";
+  const url = isNewGist ? "https://api.github.com/gists" : `https://api.github.com/gists/${gistId}`;
   /** Gist 上传响应。 */
-  const response = await fetch(url, {
-    method: sync.gistId ? "PATCH" : "POST",
+  const response = await fetchWithTimeout(url, {
+    method: isNewGist ? "POST" : "PATCH",
     headers: {
       Authorization: `Bearer ${sync.gistToken}`,
       Accept: "application/vnd.github+json",
       "Content-Type": "application/json;charset=utf-8"
     },
     body: JSON.stringify({
-      description: "MyTabDesk manual sync backup",
+      description: isNewGist ? "MyTabDesk Sync" : undefined,
       public: false,
       files: {
         [filename]: {
@@ -2955,7 +3050,43 @@ async function uploadGist(sync, payload) {
 
   /** Gist 响应数据。 */
   const result = await response.json();
-  return result.id || sync.gistId;
+  return result.id || gistId;
+}
+
+/**
+ * 自动查找当前 Token 下已有的 MyTabDesk 同步 Gist。
+ *
+ * @param {object} sync 同步配置。
+ * @returns {Promise<object|null>} 找到的 Gist 摘要对象，未找到时返回 null。
+ */
+async function findMyTabDeskGist(sync) {
+  /** Gist 列表请求地址。 */
+  const url = "https://api.github.com/gists?per_page=100";
+  /** Gist 列表响应。 */
+  const response = await fetchWithTimeout(url, {
+    method: "GET",
+    headers: {
+      Authorization: `Bearer ${sync.gistToken}`,
+      Accept: "application/vnd.github+json"
+    }
+  });
+
+  if (!response.ok) {
+    throw new Error(`GitHub Gist 列表获取失败：${response.status}`);
+  }
+
+  /** Gist 列表数据。 */
+  const gists = await response.json();
+  /** 同步文件名。 */
+  const filename = sync.gistFilename || "mytabdesk-sync.json";
+
+  for (const gist of gists) {
+    if (isMyTabDeskGist(gist, filename)) {
+      return gist;
+    }
+  }
+
+  return null;
 }
 
 /**
@@ -2966,12 +3097,22 @@ async function uploadGist(sync, payload) {
  * @throws {Error} 当服务端返回失败状态时抛出错误。
  */
 async function downloadGist(sync) {
-  if (!sync.gistId) {
-    throw new Error("请先填写 Gist ID，或先上传一次自动创建 Gist。");
+  /** 最终使用的 Gist ID。 */
+  let gistId = sync.gistId;
+
+  if (!gistId) {
+    /** 自动查找到的 MyTabDesk Gist。 */
+    const foundGist = await findMyTabDeskGist(sync);
+
+    if (!foundGist) {
+      throw new Error("未找到指定同步文件，请先上传一次自动创建 Gist。");
+    }
+
+    gistId = foundGist.id;
   }
 
   /** Gist 下载响应。 */
-  const response = await fetch(`https://api.github.com/gists/${sync.gistId}`, {
+  const response = await fetchWithTimeout(`https://api.github.com/gists/${gistId}`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${sync.gistToken}`,
@@ -3007,11 +3148,12 @@ async function uploadManualSync(provider) {
     selectSyncProvider(provider);
     await saveSyncSettingsFromForm();
     /** 当前同步配置。 */
-    const sync = validateSyncSettings();
+    const sync = state.data.settings.sync;
+    validateSyncProviderSettings(sync, provider);
     /** 同步备份文本。 */
     const payload = createSyncPayload();
 
-    if (sync.provider === "webdav") {
+    if (provider === "webdav") {
       await uploadWebDav(sync, payload);
     } else {
       /** 上传后返回的 Gist ID。 */
@@ -3043,8 +3185,9 @@ async function downloadManualSync(provider) {
     selectSyncProvider(provider);
     await saveSyncSettingsFromForm();
     /** 当前同步配置。 */
-    const sync = validateSyncSettings();
-    await runBidirectionalSync(sync);
+    const sync = state.data.settings.sync;
+    validateSyncProviderSettings(sync, provider);
+    await runBidirectionalSync(sync, provider);
     renderAll();
     await showAlert("已从云端下载、自动合并并回传云端。");
   } catch (error) {
