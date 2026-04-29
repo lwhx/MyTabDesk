@@ -1336,11 +1336,6 @@ async function createBlankSpaceFromMenu() {
  *
  * @returns {void}
  */
-async function showTobyImportPlaceholder() {
-  closeCreateSpaceMenu();
-  await showAlert("Toby 导入即将支持，后续会解析 Toby 导出的空间数据。");
-}
-
 /**
  * 提示浏览器书签导入能力暂未开放。
  *
@@ -3128,7 +3123,6 @@ function bindEvents() {
   });
   elements.createBlankSpaceBtn.addEventListener("click", createBlankSpaceFromMenu);
   elements.importSpaceBtn.addEventListener("click", requestImportSpace);
-  elements.importTobyBtn.addEventListener("click", showTobyImportPlaceholder);
   elements.importBookmarksBtn.addEventListener("click", showBookmarksImportPlaceholder);
   elements.closeSpaceIconDialogBtn.addEventListener("click", closeSpaceIconPicker);
   elements.cancelSpaceIconBtn.addEventListener("click", closeSpaceIconPicker);
@@ -3249,7 +3243,6 @@ function bindElements() {
   elements.createSpaceMenu = getElement("createSpaceMenu");
   elements.createBlankSpaceBtn = getElement("createBlankSpaceBtn");
   elements.importSpaceBtn = getElement("importSpaceBtn");
-  elements.importTobyBtn = getElement("importTobyBtn");
   elements.importBookmarksBtn = getElement("importBookmarksBtn");
   elements.toggleSidebarBtn = getElement("toggleSidebarBtn");
   elements.spaceList = getElement("spaceList");
