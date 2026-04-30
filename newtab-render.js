@@ -2,6 +2,9 @@
 const app = root.MyTabDeskPage;
 const { state, elements, SPACE_ICON_OPTIONS } = app;
 const {
+  filterGroups
+} = app;
+const {
   getDisplaySpaceIcon,
   getActiveSpace,
   formatDateTime,
