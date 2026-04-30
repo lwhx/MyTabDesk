@@ -597,6 +597,7 @@ async function downloadManualSync(provider) {
       lastSyncAt: getCurrentTime()
     };
     state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
+    state.viewMode = "workspace";
 
     await saveData({ skipAutoSync: true });
     root.MyTabDeskRender.renderAll();

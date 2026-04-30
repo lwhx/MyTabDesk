@@ -360,6 +360,7 @@ function normalizeData(rawData) {
         webdavUrl: rawData.settings && rawData.settings.sync && rawData.settings.sync.webdavUrl ? rawData.settings.sync.webdavUrl : DEFAULT_SYNC_SETTINGS.webdavUrl,
         webdavUsername: rawData.settings && rawData.settings.sync && rawData.settings.sync.webdavUsername ? rawData.settings.sync.webdavUsername : DEFAULT_SYNC_SETTINGS.webdavUsername,
         webdavPassword: rawData.settings && rawData.settings.sync && rawData.settings.sync.webdavPassword ? rawData.settings.sync.webdavPassword : DEFAULT_SYNC_SETTINGS.webdavPassword,
+        webdavFilename: rawData.settings && rawData.settings.sync && rawData.settings.sync.webdavFilename ? rawData.settings.sync.webdavFilename : DEFAULT_SYNC_SETTINGS.webdavFilename,
         webdavAutoSyncEnabled: Boolean(rawData.settings && rawData.settings.sync && rawData.settings.sync.webdavAutoSyncEnabled),
         gistToken: rawData.settings && rawData.settings.sync && rawData.settings.sync.gistToken ? rawData.settings.sync.gistToken : DEFAULT_SYNC_SETTINGS.gistToken,
         gistId: rawData.settings && rawData.settings.sync && rawData.settings.sync.gistId ? rawData.settings.sync.gistId : DEFAULT_SYNC_SETTINGS.gistId,

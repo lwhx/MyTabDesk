@@ -813,6 +813,75 @@ function testCreateBackupSafeDataRemovesSecrets() {
 }
 
 /**
+ * 测试导出再导入后分组和链接完整保留。
+ *
+ * @returns {void}
+ */
+function testExportImportRoundTripPreservesGroupsAndLinks() {
+  /** 原始工作台数据。 */
+  const originalData = normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A",
+        groups: [
+          {
+            id: "group-a",
+            name: "分组 A",
+            links: [
+              {
+                id: "link-1",
+                title: "Example",
+                url: "https://example.com",
+                favIconUrl: "https://example.com/favicon.ico"
+              },
+              {
+                id: "link-2",
+                title: "GitHub",
+                url: "https://github.com",
+                favIconUrl: ""
+              }
+            ]
+          },
+          {
+            id: "group-b",
+            name: "分组 B",
+            links: [
+              {
+                id: "link-3",
+                title: "Google",
+                url: "https://google.com"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    settings: {}
+  });
+  /** 导出后的 JSON 文本。 */
+  const exportedText = exportData(originalData);
+  /** 重新导入后的工作台数据。 */
+  const importedData = importData(exportedText);
+
+  assert.equal(importedData.spaces.length, 1);
+  assert.equal(importedData.spaces[0].id, "space-a");
+  assert.equal(importedData.spaces[0].groups.length, 2);
+  assert.equal(importedData.spaces[0].groups[0].id, "group-a");
+  assert.equal(importedData.spaces[0].groups[0].name, "分组 A");
+  assert.equal(importedData.spaces[0].groups[0].links.length, 2);
+  assert.equal(importedData.spaces[0].groups[0].links[0].id, "link-1");
+  assert.equal(importedData.spaces[0].groups[0].links[0].title, "Example");
+  assert.equal(importedData.spaces[0].groups[0].links[0].url, "https://example.com");
+  assert.equal(importedData.spaces[0].groups[0].links[1].id, "link-2");
+  assert.equal(importedData.spaces[0].groups[1].id, "group-b");
+  assert.equal(importedData.spaces[0].groups[1].links.length, 1);
+  assert.equal(importedData.spaces[0].groups[1].links[0].title, "Google");
+}
+
+/**
  * 测试导入非法 JSON 文本时会抛出可读错误。
  *
  * @returns {void}
@@ -1527,6 +1596,7 @@ async function runTests() {
   testDetectImportConflictFlagsOlderAndDifferentDevice();
   testExportDataUsesTabTabCompatibleShape();
   testCreateBackupSafeDataRemovesSecrets();
+  testExportImportRoundTripPreservesGroupsAndLinks();
   testImportDataRejectsInvalidText();
   testImportDataReadsPackagedBackup();
   testImportDataNormalizesData();
