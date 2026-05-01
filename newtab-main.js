@@ -163,6 +163,10 @@ function bindEvents() {
       state.openLinkMenuId = "";
       root.MyTabDeskRender.renderGroups();
     }
+
+    if (!event.target.closest(".group-move-wrap") && state.movingGroupId) {
+      root.MyTabDeskActions.closeMoveGroupMenu();
+    }
   });
 }
 

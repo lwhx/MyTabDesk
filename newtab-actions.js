@@ -272,7 +272,21 @@ function toggleMoveGroupMenu(groupId) {
 }
 
 /**
- * 将当前空间内的分组移动到指定空间末尾。
+ * 关闭移动分组菜单。
+ *
+ * @returns {void}
+ */
+function closeMoveGroupMenu() {
+  if (!state.movingGroupId) {
+    return;
+  }
+
+  state.movingGroupId = "";
+  root.MyTabDeskRender.renderGroups();
+}
+
+/**
+ * 将当前空间内的分组原样移动到指定空间末尾。
  *
  * @param {string} groupId 待移动分组 ID。
  * @param {string} targetSpaceId 目标空间 ID。
@@ -292,13 +306,30 @@ async function moveGroupToSpace(groupId, targetSpaceId) {
 
   /** 待移动分组。 */
   const group = sourceSpace.groups[sourceGroupIndex];
+  /** 分组链接数量。 */
+  const linkCount = Array.isArray(group.links) ? group.links.length : 0;
+  /** 确认弹窗提示文本。 */
+  const confirmMessage = `将把“${group.name}”移动到“${targetSpace.name}”。\n该分组包含 ${linkCount} 个链接，移动后当前空间将不再显示它。\n分组名称会保持不变，是否继续？`;
+  /** 用户是否确认移动。 */
+  const confirmed = await showConfirm(confirmMessage, "移动分组");
+
+  if (!confirmed) {
+    state.movingGroupId = "";
+    root.MyTabDeskRender.renderGroups();
+    return;
+  }
+
   /** 当前时间戳。 */
   const now = Date.now();
-  sourceSpace.groups.splice(sourceGroupIndex, 1);
-  targetSpace.groups.push({
+  /** 移动后的分组。 */
+  const movedGroup = {
     ...group,
+    name: group.name,
     updatedAt: now
-  });
+  };
+
+  sourceSpace.groups.splice(sourceGroupIndex, 1);
+  targetSpace.groups.push(movedGroup);
   sourceSpace.updatedAt = now;
   targetSpace.updatedAt = now;
   state.movingGroupId = "";
@@ -306,6 +337,7 @@ async function moveGroupToSpace(groupId, targetSpaceId) {
 
   await saveData();
   root.MyTabDeskRender.renderAll();
+  await showAlert(`已将“${group.name}”移动到“${targetSpace.name}”，分组名称未修改。`, "移动完成");
 }
 
 /**
@@ -1227,6 +1259,7 @@ root.MyTabDeskActions = {
   toggleGroup,
   toggleGroupPinned,
   toggleMoveGroupMenu,
+  closeMoveGroupMenu,
   moveGroupToSpace,
   renameGroup,
   openEditLinkDialog,

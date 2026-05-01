@@ -852,7 +852,61 @@ body[data-theme="dark"] .space-icon {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 14px;
+  padding: 12px 16px;
+  cursor: pointer;
+  border-radius: var(--radius-large) var(--radius-large) 0 0;
+  transition: background 0.2s ease;
+  user-select: none;
+}
+
+.group-header:hover {
+  background: var(--color-panel-soft);
+}
+
+.group-header-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.group-toggle-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-panel);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.group-toggle-button:hover {
+  border-color: var(--color-primary);
+  background: var(--color-primary-soft);
+  transform: scale(1.05);
+}
+
+.group-toggle-button:active {
+  transform: scale(0.95);
+}
+
+.group-toggle-arrow {
+  display: inline-block;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--color-text-secondary);
+  line-height: 1;
+  transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.group-toggle-button:hover .group-toggle-arrow {
+  color: var(--color-primary);
 }
 
 .group-title-block {
@@ -866,24 +920,26 @@ body[data-theme="dark"] .space-icon {
   border: 1px solid transparent;
   border-radius: 8px;
   color: var(--color-text);
-  font-size: 16px;
-  font-weight: 700;
+  font-size: 15px;
+  font-weight: 600;
   text-align: left;
   background: transparent;
 }
 
 .group-name-button {
   display: block;
-  padding: 3px 6px;
+  padding: 4px 8px;
   overflow: hidden;
-  cursor: text;
+  cursor: pointer;
   text-overflow: ellipsis;
   white-space: nowrap;
+  transition: all 0.2s ease;
 }
 
 .group-name-button:hover {
   border-color: var(--color-border);
   background: var(--color-panel-soft);
+  color: var(--color-primary);
 }
 
 .group-name-input {
@@ -931,38 +987,112 @@ body[data-theme="dark"] .space-icon {
 .move-group-menu {
   position: absolute;
   top: calc(100% + 8px);
-  left: 0;
+  right: 0;
   z-index: 25;
   display: grid;
-  gap: 4px;
-  min-width: 150px;
-  max-height: 320px;
-  padding: 7px;
+  gap: 10px;
+  width: min(360px, 86vw);
+  max-height: 420px;
+  padding: 12px;
   overflow-y: auto;
   border: 1px solid var(--color-border);
-  border-radius: 12px;
+  border-radius: 16px;
   background: var(--color-panel);
   box-shadow: var(--shadow-soft);
 }
 
+.move-group-menu-header {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.move-group-menu-title {
+  overflow: hidden;
+  color: var(--color-text);
+  font-size: 13px;
+  font-weight: 850;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.move-group-menu-desc,
+.move-group-menu-tip,
+.move-group-space-meta,
+.move-group-duplicate-text {
+  color: var(--color-muted);
+  font-size: 12px;
+}
+
+.move-group-space-list {
+  display: grid;
+  gap: 8px;
+}
+
+.move-group-space-item {
+  display: grid;
+  gap: 7px;
+  padding: 7px;
+  border: 1px solid var(--color-border);
+  border-radius: 13px;
+  background: var(--color-panel-soft);
+}
+
+.move-group-space-item:hover {
+  border-color: var(--color-border-strong);
+  background: var(--color-card-hover);
+}
+
 .move-group-space-button {
-  display: flex;
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
   align-items: center;
-  justify-content: flex-start;
-  min-height: 30px;
-  padding: 0 10px;
+  gap: 9px;
+  width: 100%;
+  min-height: 42px;
+  padding: 0;
   border: 0;
-  border-radius: 9px;
+  border-radius: 10px;
   color: var(--color-text);
   text-align: left;
   background: transparent;
   cursor: pointer;
-  white-space: nowrap;
 }
 
 .move-group-space-button:hover {
   color: var(--color-primary);
+}
+
+.move-group-space-icon {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
   background: var(--color-primary-soft);
+}
+
+.move-group-space-content {
+  display: grid;
+  min-width: 0;
+}
+
+.move-group-space-name {
+  overflow: hidden;
+  font-size: 13px;
+  font-weight: 750;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.move-group-menu-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-top: 9px;
+  border-top: 1px solid var(--color-border);
 }
 
 .link-grid {

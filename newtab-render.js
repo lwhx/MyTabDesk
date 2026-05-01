@@ -8,6 +8,7 @@ const {
   getDisplaySpaceIcon,
   getActiveSpace,
   formatDateTime,
+  getTotalLinks,
   getDataSummary,
   clearElement,
   createTextElement,
@@ -360,7 +361,7 @@ function createGroupElement(group) {
   const activeSpace = getActiveSpace();
   /** 分组容器元素。 */
   const groupElement = document.createElement("section");
-  groupElement.className = "group-card";
+  groupElement.className = "group-section";
   groupElement.dataset.groupId = group.id;
   groupElement.draggable = !group.pinned;
 
@@ -371,16 +372,34 @@ function createGroupElement(group) {
   /** 分组头部区域。 */
   const header = document.createElement("header");
   header.className = "group-header";
+  header.title = group.collapsed ? "点击展开分组" : "点击收起分组";
+  header.addEventListener("click", () => root.MyTabDeskActions.toggleGroup(group.id));
+
   /** 分组左侧信息区域。 */
   const headerInfo = document.createElement("div");
   headerInfo.className = "group-header-info";
+  headerInfo.addEventListener("click", (event) => event.stopPropagation());
+
   /** 分组折叠按钮。 */
   const toggleButton = document.createElement("button");
   toggleButton.type = "button";
   toggleButton.className = "group-toggle-button";
-  toggleButton.textContent = group.collapsed ? "▶" : "▼";
   toggleButton.setAttribute("aria-label", `${group.collapsed ? "展开" : "折叠"}分组 ${group.name}`);
-  toggleButton.addEventListener("click", () => root.MyTabDeskActions.toggleGroup(group.id));
+  toggleButton.setAttribute("title", group.collapsed ? "点击展开分组" : "点击收起分组");
+  toggleButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    root.MyTabDeskActions.toggleGroup(group.id);
+  });
+
+  /** 折叠箭头图标。 */
+  const arrowIcon = document.createElement("span");
+  arrowIcon.className = "group-toggle-arrow";
+  arrowIcon.textContent = group.collapsed ? "›" : "›";
+  if (group.collapsed) {
+    arrowIcon.style.transform = "rotate(-90deg)";
+  }
+  toggleButton.appendChild(arrowIcon);
+
   /** 分组元信息。 */
   const meta = createTextElement("span", "group-meta", `${group.links.length} 个链接`);
 
@@ -395,15 +414,21 @@ function createGroupElement(group) {
   openAllButton.className = "secondary-button group-action-button";
   openAllButton.textContent = "打开全部";
   openAllButton.addEventListener("click", () => root.MyTabDeskActions.openGroup(group.id));
+  /** 移动分组区域。 */
+  const moveWrap = document.createElement("div");
+  moveWrap.className = "group-move-wrap";
   /** 移动分组按钮。 */
   const moveButton = document.createElement("button");
   moveButton.type = "button";
-  moveButton.className = "secondary-button group-action-button";
+  moveButton.className = "secondary-button group-action-button group-move-button";
   moveButton.textContent = "移动";
+  moveButton.setAttribute("aria-expanded", state.movingGroupId === group.id ? "true" : "false");
+  moveButton.setAttribute("aria-label", `移动分组 ${group.name} 到其他空间`);
   moveButton.addEventListener("click", (event) => {
     event.stopPropagation();
     root.MyTabDeskActions.toggleMoveGroupMenu(group.id);
   });
+  moveWrap.appendChild(moveButton);
   /** 固定分组按钮。 */
   const pinButton = document.createElement("button");
   pinButton.type = "button";
@@ -417,12 +442,12 @@ function createGroupElement(group) {
   deleteButton.textContent = "删除";
   deleteButton.addEventListener("click", () => root.MyTabDeskActions.deleteGroup(group.id));
 
-  actions.append(openAllButton, moveButton, pinButton, deleteButton);
+  actions.append(openAllButton, moveWrap, pinButton, deleteButton);
   header.append(headerInfo, actions);
   groupElement.appendChild(header);
 
   if (state.movingGroupId === group.id) {
-    groupElement.appendChild(createMoveGroupMenuElement(group));
+    moveWrap.appendChild(createMoveGroupMenuElement(group));
   }
 
   if (!group.collapsed) {
@@ -541,32 +566,95 @@ function createGroupNameElement(group) {
 function createMoveGroupMenuElement(group) {
   /** 当前激活空间。 */
   const activeSpace = getActiveSpace();
+  /** 可移动到的目标空间列表。 */
+  const targetSpaces = state.data.spaces.filter((space) => activeSpace && space.id !== activeSpace.id);
   /** 移动分组菜单容器。 */
   const menu = document.createElement("div");
   menu.className = "move-group-menu";
+  menu.addEventListener("click", (event) => event.stopPropagation());
 
-  for (const space of state.data.spaces) {
-    if (!activeSpace || space.id === activeSpace.id) {
-      continue;
+  /** 移动菜单头部。 */
+  const header = document.createElement("div");
+  header.className = "move-group-menu-header";
+  /** 移动菜单标题。 */
+  const title = createTextElement("strong", "move-group-menu-title", "移动到其他空间");
+  /** 移动菜单说明。 */
+  const description = createTextElement("span", "move-group-menu-desc", `${group.name} · ${group.links.length} 个链接`);
+  header.append(title, description);
+  menu.appendChild(header);
+
+  if (targetSpaces.length === 0) {
+    menu.appendChild(createTextElement("div", "panel-message", "没有可移动到的其他空间，请先创建新空间。"));
+  } else {
+    /** 目标空间列表。 */
+    const list = document.createElement("div");
+    list.className = "move-group-space-list";
+
+    for (const space of targetSpaces) {
+      list.appendChild(createMoveGroupSpaceElement(group, space));
     }
 
-    /** 目标空间按钮。 */
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "move-group-space-button";
-    button.textContent = `${getDisplaySpaceIcon(space.icon)} ${space.name}`;
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      root.MyTabDeskActions.moveGroupToSpace(group.id, space.id);
-    });
-    menu.appendChild(button);
+    menu.appendChild(list);
   }
 
-  if (menu.children.length === 0) {
-    menu.appendChild(createTextElement("div", "panel-message", "没有可移动到的其他空间。"));
-  }
+  /** 移动菜单底部。 */
+  const footer = document.createElement("div");
+  footer.className = "move-group-menu-footer";
+  /** 移动菜单提示。 */
+  const tip = createTextElement("span", "move-group-menu-tip", "移动前会二次确认，避免误操作。");
+  /** 取消移动菜单按钮。 */
+  const cancelButton = document.createElement("button");
+  cancelButton.type = "button";
+  cancelButton.className = "mini-button";
+  cancelButton.textContent = "取消";
+  cancelButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    root.MyTabDeskActions.closeMoveGroupMenu();
+  });
+  footer.append(tip, cancelButton);
+  menu.appendChild(footer);
 
   return menu;
+}
+
+/**
+ * 创建移动分组目标空间选项。
+ *
+ * @param {object} group 待移动分组。
+ * @param {object} space 目标空间。
+ * @returns {HTMLElement} 目标空间选项元素。
+ */
+function createMoveGroupSpaceElement(group, space) {
+  /** 目标空间链接总数。 */
+  const linkCount = getTotalLinks(space);
+  /** 目标空间选项容器。 */
+  const item = document.createElement("div");
+  item.className = "move-group-space-item";
+
+  /** 目标空间主按钮。 */
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "move-group-space-button";
+  button.setAttribute("aria-label", `移动分组 ${group.name} 到空间 ${space.name}`);
+
+  /** 目标空间图标。 */
+  const icon = createTextElement("span", "move-group-space-icon", getDisplaySpaceIcon(space.icon));
+  /** 目标空间信息容器。 */
+  const content = document.createElement("span");
+  content.className = "move-group-space-content";
+  /** 目标空间名称。 */
+  const name = createTextElement("span", "move-group-space-name", space.name);
+  /** 目标空间统计信息。 */
+  const meta = createTextElement("span", "move-group-space-meta", `${space.groups.length} 个分组 · ${linkCount} 个链接`);
+  content.append(name, meta);
+  button.append(icon, content);
+  button.addEventListener("click", (event) => {
+    event.stopPropagation();
+    root.MyTabDeskActions.moveGroupToSpace(group.id, space.id);
+  });
+  item.appendChild(button);
+
+  return item;
 }
 
 /**
@@ -920,6 +1008,7 @@ root.MyTabDeskRender = {
   createGroupElement,
   createGroupNameElement,
   createMoveGroupMenuElement,
+  createMoveGroupSpaceElement,
   createLinkElement,
   createLinkActionMenuElement,
   renderCurrentTabs,
