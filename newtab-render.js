@@ -140,6 +140,13 @@ function renderSpaces() {
   clearElement(elements.spaceList);
 
   for (const space of state.data.spaces) {
+    const itemWrap = document.createElement("div");
+    itemWrap.className = "space-item-wrap";
+
+    if (state.openSpaceMenuId === space.id) {
+      itemWrap.classList.add("menu-open");
+    }
+
     /** 空间按钮元素。 */
     const item = document.createElement("button");
     item.type = "button";
@@ -214,11 +221,13 @@ function renderSpaces() {
     });
 
     item.append(content, dragHandle, menuButton);
-    elements.spaceList.appendChild(item);
+    itemWrap.appendChild(item);
 
     if (state.openSpaceMenuId === space.id) {
-      elements.spaceList.appendChild(createSpaceMenuElement(space));
+      itemWrap.appendChild(createSpaceMenuElement(space));
     }
+
+    elements.spaceList.appendChild(itemWrap);
   }
 }
 
@@ -450,6 +459,10 @@ function createGroupElement(group, activeSpace) {
 
   if (state.movingGroupId === group.id) {
     groupElement.classList.add("move-menu-open");
+  }
+
+  if (state.openLinkMenuId && Array.isArray(group.links) && group.links.some((link) => link.id === state.openLinkMenuId)) {
+    groupElement.classList.add("link-menu-open");
   }
 
   /** 分组头部区域。 */
