@@ -157,18 +157,6 @@ function getToastIcon(type) {
 }
 
 /**
- * HTML 转义，防止 XSS
- *
- * @param {string} text - 原始文本
- * @returns {string} 转义后的文本
- */
-function escapeHtml(text) {
-  const div = document.createElement("div");
-  div.textContent = text;
-  return div.innerHTML;
-}
-
-/**
  * 显示统一通知（同时显示应用内提示和系统通知）
  *
  * @param {string} title - 通知标题（用于系统通知）

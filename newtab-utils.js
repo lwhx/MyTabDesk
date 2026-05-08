@@ -97,23 +97,23 @@ function isSafeFaviconUrl(url) {
   try {
     const parsed = new URL(trimmedUrl);
 
-    // 只允许 http 和 https 协议
+    if (parsed.protocol === "chrome-extension:") {
+      return parsed.hostname === chrome.runtime.id && parsed.pathname.startsWith("/_favicon/");
+    }
+
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return false;
     }
 
-    // 检查是否为图片路径（常见图片扩展名）
     const path = parsed.pathname.toLowerCase();
     const imageExtensions = [".png", ".ico", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp"];
     const hasImageExtension = imageExtensions.some((ext) => path.endsWith(ext));
 
-    // 如果路径没有图片扩展名，也允许 favicon 或 icon 相关的路径
     const safePaths = ["/favicon", "/favicon.ico", "/apple-touch-icon", "/icon"];
     const hasSafePath = safePaths.some((safe) => path.includes(safe));
 
     return hasImageExtension || hasSafePath || parsed.hostname.includes("favicon");
   } catch (error) {
-    // 无法解析的 URL 视为不安全
     return false;
   }
 }
@@ -313,7 +313,7 @@ function getDataSummary(data) {
  * @returns {void}
  */
 function clearElement(element) {
-  element.innerHTML = "";
+  element.replaceChildren();
 }
 
 /**
@@ -333,16 +333,42 @@ function createTextElement(tagName, className, text) {
 }
 
 /**
- * 创建站点图标元素，加载失败时自动回退为首字母图标。
+ * 根据页面地址创建 Chrome 原生图标地址。
+ *
+ * @param {string} pageUrl 页面地址。
+ * @returns {string} Chrome 原生图标地址，不可用时返回空字符串。
+ */
+function getChromeFaviconUrl(pageUrl) {
+  if (!pageUrl || typeof pageUrl !== "string" || typeof chrome === "undefined" || !chrome.runtime || !chrome.runtime.id) {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(pageUrl.trim());
+
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return "";
+    }
+
+    return `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(parsed.href)}&size=32`;
+  } catch (error) {
+    return "";
+  }
+}
+
+/**
+ * 创建站点图标元素，优先使用 Chrome 原生图标能力，加载失败时自动回退为首字母图标。
  * 验证图标 URL 是否安全，不安全的 URL 直接使用兜底图标。
  *
  * @param {string} src 图标地址。
  * @param {string} title 链接或标签标题。
+ * @param {string} pageUrl 页面地址。
  * @returns {HTMLElement} 图标或兜底图标元素。
  */
-function createFavicon(src, title) {
-  // 验证图标 URL 安全性，不安全则使用兜底图标
-  if (!src || !isSafeFaviconUrl(src)) {
+function createFavicon(src, title, pageUrl = "") {
+  const faviconUrl = getChromeFaviconUrl(pageUrl) || src;
+
+  if (!faviconUrl || !isSafeFaviconUrl(faviconUrl)) {
     /** 无图标地址或不安全时显示的兜底图标。 */
     const fallback = document.createElement("div");
     fallback.className = "fallback-icon";
@@ -353,12 +379,12 @@ function createFavicon(src, title) {
   /** 站点图标图片元素。 */
   const image = document.createElement("img");
   image.className = "favicon";
-  image.src = src;
+  image.src = faviconUrl;
   image.alt = "";
   image.referrerPolicy = "no-referrer";
   image.addEventListener("error", () => {
     /** 图片加载失败时创建的兜底图标。 */
-    const fallback = createFavicon("", title);
+    const fallback = createFavicon("", title, "");
     image.replaceWith(fallback);
   });
   return image;
@@ -383,6 +409,7 @@ root.MyTabDeskUtils = {
   clearElement,
   createTextElement,
   createFavicon,
+  getChromeFaviconUrl,
   getCurrentTime,
   markDirty,
   isSafeFaviconUrl

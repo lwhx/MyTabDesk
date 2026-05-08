@@ -4,6 +4,12 @@
   "description": "本地优先的浏览器新标签页工作台插件",
   "private": true,
   "scripts": {
-    "test": "node tests/tabdesk-core.test.js"
+    "test": "node tests/tabdesk-core.test.js",
+    "lint": "eslint ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.3.0",
+    "globals": "^17.6.0"
   }
 }

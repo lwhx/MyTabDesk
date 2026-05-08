@@ -827,7 +827,7 @@ function createLinkElement(groupId, link) {
 
     root.MyTabDeskActions.openLink(link.url);
   });
-  contentButton.append(createFavicon(link.favIconUrl, link.title || link.url), content);
+  contentButton.append(createFavicon(link.favIconUrl, link.title || link.url, link.url), content);
 
   /** 链接更多操作按钮。 */
   const moreButton = document.createElement("button");
@@ -995,7 +995,7 @@ function renderCurrentTabs() {
       }
     });
 
-    item.append(createFavicon(tab.favIconUrl, tab.title || tab.url), content, saveButton);
+    item.append(createFavicon(tab.favIconUrl, tab.title || tab.url, tab.url), content, saveButton);
     item.addEventListener("click", () => root.MyTabDeskActions.activateTab(tab.tabId));
     item.addEventListener("dragstart", (event) => {
       event.stopPropagation();
