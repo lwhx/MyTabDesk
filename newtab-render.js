@@ -91,6 +91,7 @@ function applyLayoutSettings() {
   /** 是否正在显示设置页。 */
   const isSettings = state.viewMode === "settings";
   elements.createSpaceMenu.hidden = !state.createSpaceMenuOpen;
+  elements.createSpaceBtn.setAttribute("aria-expanded", state.createSpaceMenuOpen ? "true" : "false");
   elements.workspaceToolbar.hidden = isSettings;
   elements.batchBar.hidden = isSettings || !state.batchDeleteEnabled;
   elements.groupList.hidden = isSettings;
@@ -176,6 +177,8 @@ function renderSpaces() {
     menuButton.className = "space-menu-button";
     menuButton.textContent = "…";
     menuButton.setAttribute("aria-label", `打开空间 ${space.name} 的更多操作`);
+    menuButton.setAttribute("aria-haspopup", "menu");
+    menuButton.setAttribute("aria-expanded", state.openSpaceMenuId === space.id ? "true" : "false");
 
     item.addEventListener("click", async () => {
       try {
@@ -241,6 +244,7 @@ function createSpaceMenuElement(space) {
   /** 空间菜单容器。 */
   const menu = document.createElement("div");
   menu.className = "space-menu-panel";
+  menu.setAttribute("role", "menu");
 
   /** 更改图标菜单项。 */
   const changeIconButton = createSpaceMenuButton("更改图标");
@@ -270,6 +274,7 @@ function createSpaceMenuButton(text, danger = false) {
   button.type = "button";
   button.className = danger ? "space-menu-action danger" : "space-menu-action";
   button.textContent = text;
+  button.setAttribute("role", "menuitem");
   return button;
 }
 
@@ -519,6 +524,7 @@ function createGroupElement(group, activeSpace) {
   moveButton.type = "button";
   moveButton.className = "secondary-button group-action-button group-move-button";
   moveButton.textContent = "移动";
+  moveButton.setAttribute("aria-haspopup", "menu");
   moveButton.setAttribute("aria-expanded", state.movingGroupId === group.id ? "true" : "false");
   moveButton.setAttribute("aria-label", `移动分组 ${group.name} 到其他空间`);
   moveButton.addEventListener("click", (event) => {
@@ -685,6 +691,7 @@ function createMoveGroupMenuElement(group, activeSpace) {
   /** 移动分组菜单容器。 */
   const menu = document.createElement("div");
   menu.className = "move-group-menu";
+  menu.setAttribute("role", "menu");
   menu.addEventListener("click", (event) => event.stopPropagation());
 
   /** 移动菜单头部。 */
@@ -828,6 +835,8 @@ function createLinkElement(groupId, link) {
   moreButton.className = "link-action-button";
   moreButton.textContent = "⋯";
   moreButton.setAttribute("aria-label", `打开链接 ${link.title || link.url} 的操作菜单`);
+  moreButton.setAttribute("aria-haspopup", "menu");
+  moreButton.setAttribute("aria-expanded", state.openLinkMenuId === link.id ? "true" : "false");
   moreButton.addEventListener("click", (event) => {
     event.stopPropagation();
     state.openLinkMenuId = state.openLinkMenuId === link.id ? "" : link.id;
@@ -895,12 +904,14 @@ function createLinkActionMenuElement(groupId, link) {
   /** 链接操作菜单容器。 */
   const menu = document.createElement("div");
   menu.className = "link-action-menu";
+  menu.setAttribute("role", "menu");
 
   /** 编辑链接按钮。 */
   const editButton = document.createElement("button");
   editButton.type = "button";
   editButton.className = "link-menu-action";
   editButton.textContent = "编辑";
+  editButton.setAttribute("role", "menuitem");
   editButton.addEventListener("click", (event) => {
     event.stopPropagation();
     root.MyTabDeskActions.openEditLinkDialog(groupId, link.id);
@@ -911,6 +922,7 @@ function createLinkActionMenuElement(groupId, link) {
   deleteButton.type = "button";
   deleteButton.className = "link-menu-action danger";
   deleteButton.textContent = "删除";
+  deleteButton.setAttribute("role", "menuitem");
   deleteButton.addEventListener("click", async (event) => {
     event.stopPropagation();
     state.openLinkMenuId = "";
@@ -1003,6 +1015,7 @@ function toggleCreateSpaceMenu() {
   state.createSpaceMenuOpen = !state.createSpaceMenuOpen;
   state.openSpaceMenuId = "";
   elements.createSpaceMenu.hidden = !state.createSpaceMenuOpen;
+  elements.createSpaceBtn.setAttribute("aria-expanded", state.createSpaceMenuOpen ? "true" : "false");
 }
 
 /**
@@ -1013,6 +1026,7 @@ function toggleCreateSpaceMenu() {
 function closeCreateSpaceMenu() {
   state.createSpaceMenuOpen = false;
   elements.createSpaceMenu.hidden = true;
+  elements.createSpaceBtn.setAttribute("aria-expanded", "false");
 }
 
 /**
