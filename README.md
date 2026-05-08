@@ -14,7 +14,7 @@ MyTabDesk 是一个本地优先的浏览器新标签页工作台插件，用于�
 - 批量删除链接
 - JSON 数据导入和导出
 - 加密备份导入和导出
-- 手动同步能力规划
+- WebDAV / GitHub Gist 手动同步和自动同步
 
 ## 安装方式
 
@@ -41,6 +41,10 @@ MyTabDesk 是一个本地优先的浏览器新标签页工作台插件，用于�
 |---|---|
 | `tabs` | 读取当前窗口标签页、切换标签页、打开新标签页 |
 | `storage` | 将空间、分组、链接和设置保存到本地浏览器 |
+| `contextMenus` | 提供右键菜单快捷保存入口 |
+| `notifications` | 显示保存成功、失败和提示通知 |
+| `activeTab` | 在当前活动标签页场景下辅助读取页面信息 |
+| `https://*/*` | 访问 WebDAV 和 GitHub Gist 同步地址 |
 
 项目默认不读取浏览历史、收藏夹、Cookie，也不会将数据上传到服务器。
 
@@ -52,7 +56,7 @@ MyTabDesk 是一个本地优先的浏览器新标签页工作台插件，用于�
 
 ## 开发与测试
 
-项目不依赖构建工具，可以直接作为浏览器扩展加载。
+项目不依赖构建工具，可直接作为浏览器扩展加载。
 
 运行核心逻辑测试：
 
@@ -73,10 +77,20 @@ MyTabDesk/
 ├── assets/
 ├── tests/
 │   └── tabdesk-core.test.js
+├── background.js
+├── jsconfig.json
 ├── manifest.json
+├── newtab-app.js
+├── newtab-actions.js
+├── newtab-dialogs.js
+├── newtab-main.js
+├── newtab-notifications.js
+├── newtab-render.js
+├── newtab-sync.js
+├── newtab-utils.js
 ├── newtab.html
 ├── newtab.css
-├── newtab.js
+├── package.json
 ├── tabdesk-core.js
 └── README.md
 ```

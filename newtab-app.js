@@ -34,7 +34,8 @@ const {
   moveLinkBetweenGroups,
   updateLink,
   addLinksToGroup,
-  clearAllData
+  clearAllData,
+  getPathValue
 } = globalThis.MyTabDeskCore;
 
 /**
@@ -117,6 +118,66 @@ const SPACE_ICON_OPTIONS = [
  */
 const UI_DEFAULT_SPACE_ICON = "📁";
 
+/**
+ * 在数据中查找指定空间。
+ *
+ * @param {object} data 全量数据。
+ * @param {string} spaceId 空间 ID。
+ * @returns {object|null} 找到的空间或 null。
+ */
+function findSpace(data, spaceId) {
+  return data && Array.isArray(data.spaces) ? data.spaces.find((s) => s.id === spaceId) : null;
+}
+
+/**
+ * 在指定空间中查找指定分组。
+ *
+ * @param {object} space 空间数据。
+ * @param {string} groupId 分组 ID。
+ * @returns {object|null} 找到的分组或 null。
+ */
+function findGroupInSpace(space, groupId) {
+  return space && Array.isArray(space.groups) ? space.groups.find((g) => g.id === groupId) : null;
+}
+
+/**
+ * 在数据中查找指定分组。
+ *
+ * @param {object} data 全量数据。
+ * @param {string} spaceId 空间 ID。
+ * @param {string} groupId 分组 ID。
+ * @returns {object|null} 找到的分组或 null。
+ */
+function findGroup(data, spaceId, groupId) {
+  const space = findSpace(data, spaceId);
+  return findGroupInSpace(space, groupId);
+}
+
+/**
+ * 在指定分组中查找指定链接。
+ *
+ * @param {object} group 分组数据。
+ * @param {string} linkId 链接 ID。
+ * @returns {object|null} 找到的链接或 null。
+ */
+function findLinkInGroup(group, linkId) {
+  return group && Array.isArray(group.links) ? group.links.find((l) => l.id === linkId) : null;
+}
+
+/**
+ * 在数据中查找指定链接。
+ *
+ * @param {object} data 全量数据。
+ * @param {string} spaceId 空间 ID。
+ * @param {string} groupId 分组 ID。
+ * @param {string} linkId 链接 ID。
+ * @returns {object|null} 找到的链接或 null。
+ */
+function findLink(data, spaceId, groupId, linkId) {
+  const group = findGroup(data, spaceId, groupId);
+  return findLinkInGroup(group, linkId);
+}
+
 root.MyTabDeskPage = {
   STORAGE_KEY,
   APP_VERSION,
@@ -153,9 +214,15 @@ root.MyTabDeskPage = {
   updateLink,
   addLinksToGroup,
   clearAllData,
+  getPathValue,
   state,
   elements,
   SPACE_ICON_OPTIONS,
-  UI_DEFAULT_SPACE_ICON
+  UI_DEFAULT_SPACE_ICON,
+  findSpace,
+  findGroupInSpace,
+  findGroup,
+  findLinkInGroup,
+  findLink
 };
 })(globalThis);

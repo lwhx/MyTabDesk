@@ -1,7 +1,42 @@
 (function (root) {
 const app = root.MyTabDeskPage;
 const { state, elements } = app;
-const { getElement, loadData, saveData, createWorkspaceSnapshot } = root.MyTabDeskUtils;
+const { getElement, loadData, saveData, createWorkspaceSnapshot, markDirty } = root.MyTabDeskUtils;
+
+/**
+ * 已注册的事件监听器列表，用于页面销毁时统一清理。
+ * @type {Array<{element: HTMLElement, event: string, handler: Function}>}
+ */
+const registeredEventListeners = [];
+
+/**
+ * 安全地注册事件监听器，自动记录以便后续清理。
+ *
+ * @param {HTMLElement} element DOM 元素。
+ * @param {string} event 事件名称。
+ * @param {Function} handler 事件处理函数。
+ * @param {Object} [options] addEventListener 选项。
+ * @returns {void}
+ */
+function safeAddEventListener(element, event, handler, options) {
+  if (!element) return;
+  element.addEventListener(event, handler, options);
+  registeredEventListeners.push({ element, event, handler, options });
+}
+
+/**
+ * 清理所有已注册的事件监听器。
+ *
+ * @returns {void}
+ */
+function cleanupEventListeners() {
+  for (const { element, event, handler, options } of registeredEventListeners) {
+    if (element) {
+      element.removeEventListener(event, handler, options);
+    }
+  }
+  registeredEventListeners.length = 0;
+}
 
 /**
  * 绑定页面级事件。
@@ -9,20 +44,20 @@ const { getElement, loadData, saveData, createWorkspaceSnapshot } = root.MyTabDe
  * @returns {void}
  */
 function bindEvents() {
-  elements.appDialog.addEventListener("click", (event) => {
+  safeAddEventListener(elements.appDialog, "click", (event) => {
     if (event.target === elements.appDialog) {
       root.MyTabDeskDialogs.closeAppDialog(state.appDialogType === "alert");
     }
   });
-  elements.appDialog.addEventListener("keydown", (event) => {
+  safeAddEventListener(elements.appDialog, "keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
       root.MyTabDeskDialogs.closeAppDialog(state.appDialogType === "alert");
     }
   });
-  elements.appDialogCancelBtn.addEventListener("click", () => root.MyTabDeskDialogs.closeAppDialog(false));
-  elements.appDialogConfirmBtn.addEventListener("click", () => root.MyTabDeskDialogs.closeAppDialog(true));
-  elements.appDialogInput.addEventListener("keydown", (event) => {
+  safeAddEventListener(elements.appDialogCancelBtn, "click", () => root.MyTabDeskDialogs.closeAppDialog(false));
+  safeAddEventListener(elements.appDialogConfirmBtn, "click", () => root.MyTabDeskDialogs.closeAppDialog(true));
+  safeAddEventListener(elements.appDialogInput, "keydown", (event) => {
     if (event.key === "Enter") {
       event.preventDefault();
       event.stopPropagation();
@@ -35,26 +70,26 @@ function bindEvents() {
       root.MyTabDeskDialogs.closeAppDialog(false);
     }
   });
-  elements.editLinkDialog.addEventListener("click", (event) => {
+  safeAddEventListener(elements.editLinkDialog, "click", (event) => {
     if (event.target === elements.editLinkDialog) {
       root.MyTabDeskActions.closeEditLinkDialog();
     }
   });
-  elements.editLinkDialog.addEventListener("keydown", (event) => {
+  safeAddEventListener(elements.editLinkDialog, "keydown", (event) => {
     if (event.key === "Escape") {
       event.preventDefault();
       root.MyTabDeskActions.closeEditLinkDialog();
     }
   });
-  elements.closeEditLinkDialogBtn.addEventListener("click", root.MyTabDeskActions.closeEditLinkDialog);
-  elements.cancelEditLinkBtn.addEventListener("click", root.MyTabDeskActions.closeEditLinkDialog);
-  elements.confirmEditLinkBtn.addEventListener("click", root.MyTabDeskActions.submitEditLinkDialog);
+  safeAddEventListener(elements.closeEditLinkDialogBtn, "click", root.MyTabDeskActions.closeEditLinkDialog);
+  safeAddEventListener(elements.cancelEditLinkBtn, "click", root.MyTabDeskActions.closeEditLinkDialog);
+  safeAddEventListener(elements.confirmEditLinkBtn, "click", root.MyTabDeskActions.submitEditLinkDialog);
 
   for (const input of [elements.editLinkTitleInput, elements.editLinkUrlInput, elements.editLinkIconInput]) {
-    input.addEventListener("input", () => {
+    safeAddEventListener(input, "input", () => {
       elements.editLinkError.textContent = "";
     });
-    input.addEventListener("keydown", async (event) => {
+    safeAddEventListener(input, "keydown", async (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
         event.stopPropagation();
@@ -68,29 +103,29 @@ function bindEvents() {
       }
     });
   }
-  elements.createSpaceBtn.addEventListener("click", (event) => {
+  safeAddEventListener(elements.createSpaceBtn, "click", (event) => {
     event.stopPropagation();
     root.MyTabDeskRender.toggleCreateSpaceMenu();
   });
-  elements.createBlankSpaceBtn.addEventListener("click", root.MyTabDeskActions.createBlankSpaceFromMenu);
-  elements.importSpaceBtn.addEventListener("click", root.MyTabDeskActions.requestImportSpace);
-  elements.importBookmarksBtn.addEventListener("click", root.MyTabDeskActions.showBookmarksImportPlaceholder);
-  elements.closeSpaceIconDialogBtn.addEventListener("click", root.MyTabDeskRender.closeSpaceIconPicker);
-  elements.cancelSpaceIconBtn.addEventListener("click", root.MyTabDeskRender.closeSpaceIconPicker);
-  elements.confirmSpaceIconBtn.addEventListener("click", root.MyTabDeskRender.confirmSpaceIconChange);
-  elements.createSpaceDialog.addEventListener("click", (event) => {
+  safeAddEventListener(elements.createBlankSpaceBtn, "click", root.MyTabDeskActions.createBlankSpaceFromMenu);
+  safeAddEventListener(elements.importSpaceBtn, "click", root.MyTabDeskActions.requestImportSpace);
+  safeAddEventListener(elements.importBookmarksBtn, "click", root.MyTabDeskActions.showBookmarksImportPlaceholder);
+  safeAddEventListener(elements.closeSpaceIconDialogBtn, "click", root.MyTabDeskRender.closeSpaceIconPicker);
+  safeAddEventListener(elements.cancelSpaceIconBtn, "click", root.MyTabDeskRender.closeSpaceIconPicker);
+  safeAddEventListener(elements.confirmSpaceIconBtn, "click", root.MyTabDeskRender.confirmSpaceIconChange);
+  safeAddEventListener(elements.createSpaceDialog, "click", (event) => {
     if (event.target === elements.createSpaceDialog) {
       root.MyTabDeskRender.closeCreateSpaceDialog();
     }
   });
-  elements.closeCreateSpaceDialogBtn.addEventListener("click", root.MyTabDeskRender.closeCreateSpaceDialog);
-  elements.cancelCreateSpaceBtn.addEventListener("click", root.MyTabDeskRender.closeCreateSpaceDialog);
-  elements.confirmCreateSpaceBtn.addEventListener("click", root.MyTabDeskActions.submitCreateSpaceDialog);
-  elements.createSpaceNameInput.addEventListener("input", () => {
+  safeAddEventListener(elements.closeCreateSpaceDialogBtn, "click", root.MyTabDeskRender.closeCreateSpaceDialog);
+  safeAddEventListener(elements.cancelCreateSpaceBtn, "click", root.MyTabDeskRender.closeCreateSpaceDialog);
+  safeAddEventListener(elements.confirmCreateSpaceBtn, "click", root.MyTabDeskActions.submitCreateSpaceDialog);
+  safeAddEventListener(elements.createSpaceNameInput, "input", () => {
     state.createSpaceDialogError = "";
     root.MyTabDeskRender.renderCreateSpaceDialog();
   });
-  elements.createSpaceNameInput.addEventListener("keydown", (event) => {
+  safeAddEventListener(elements.createSpaceNameInput, "keydown", (event) => {
     if (event.key === "Enter") {
       root.MyTabDeskActions.submitCreateSpaceDialog();
     }
@@ -99,57 +134,57 @@ function bindEvents() {
       root.MyTabDeskRender.closeCreateSpaceDialog();
     }
   });
-  elements.spaceIconDialog.addEventListener("click", (event) => {
+  safeAddEventListener(elements.spaceIconDialog, "click", (event) => {
     if (event.target === elements.spaceIconDialog) {
       root.MyTabDeskRender.closeSpaceIconPicker();
     }
   });
-  elements.createGroupBtn.addEventListener("click", root.MyTabDeskActions.createGroup);
-  elements.refreshTabsBtn.addEventListener("click", root.MyTabDeskActions.refreshCurrentTabs);
-  elements.saveCurrentTabsBtn.addEventListener("click", root.MyTabDeskActions.saveCurrentTabsToGroup);
-  elements.importFileInput.addEventListener("change", root.MyTabDeskActions.importSelectedFile);
-  elements.toggleThemeBtn.addEventListener("click", root.MyTabDeskActions.toggleTheme);
-  elements.toggleSidebarBtn.addEventListener("click", root.MyTabDeskActions.toggleSidebar);
-  elements.toggleTabsPanelBtn.addEventListener("click", root.MyTabDeskActions.toggleTabsPanel);
-  elements.batchDeleteBtn.addEventListener("click", root.MyTabDeskActions.toggleBatchDelete);
-  elements.confirmBatchDeleteBtn.addEventListener("click", root.MyTabDeskActions.confirmBatchDelete);
-  elements.cancelBatchDeleteBtn.addEventListener("click", root.MyTabDeskActions.toggleBatchDelete);
-  elements.settingsBtn.addEventListener("click", root.MyTabDeskActions.openSettings);
-  elements.offlineExportBtn.addEventListener("click", root.MyTabDeskActions.exportCurrentData);
-  elements.offlineImportBtn.addEventListener("click", root.MyTabDeskActions.requestImportData);
-  elements.exportEncryptedBtn.addEventListener("click", root.MyTabDeskActions.handleExportEncryptedBackup);
-  elements.importEncryptedBtn.addEventListener("click", root.MyTabDeskActions.requestImportEncryptedBackup);
-  elements.saveSyncSettingsBtn.addEventListener("click", root.MyTabDeskSync.handleSaveSyncSettings);
-  elements.gistSyncSwitch.addEventListener("change", async () => {
+  safeAddEventListener(elements.createGroupBtn, "click", root.MyTabDeskActions.createGroup);
+  safeAddEventListener(elements.refreshTabsBtn, "click", root.MyTabDeskActions.refreshCurrentTabs);
+  safeAddEventListener(elements.saveCurrentTabsBtn, "click", root.MyTabDeskActions.saveCurrentTabsToGroup);
+  safeAddEventListener(elements.importFileInput, "change", root.MyTabDeskActions.importSelectedFile);
+  safeAddEventListener(elements.toggleThemeBtn, "click", root.MyTabDeskActions.toggleTheme);
+  safeAddEventListener(elements.toggleSidebarBtn, "click", root.MyTabDeskActions.toggleSidebar);
+  safeAddEventListener(elements.toggleTabsPanelBtn, "click", root.MyTabDeskActions.toggleTabsPanel);
+  safeAddEventListener(elements.batchDeleteBtn, "click", root.MyTabDeskActions.toggleBatchDelete);
+  safeAddEventListener(elements.confirmBatchDeleteBtn, "click", root.MyTabDeskActions.confirmBatchDelete);
+  safeAddEventListener(elements.cancelBatchDeleteBtn, "click", root.MyTabDeskActions.toggleBatchDelete);
+  safeAddEventListener(elements.settingsBtn, "click", root.MyTabDeskActions.openSettings);
+  safeAddEventListener(elements.offlineExportBtn, "click", root.MyTabDeskActions.exportCurrentData);
+  safeAddEventListener(elements.offlineImportBtn, "click", root.MyTabDeskActions.requestImportData);
+  safeAddEventListener(elements.exportEncryptedBtn, "click", root.MyTabDeskActions.handleExportEncryptedBackup);
+  safeAddEventListener(elements.importEncryptedBtn, "click", root.MyTabDeskActions.requestImportEncryptedBackup);
+  safeAddEventListener(elements.saveSyncSettingsBtn, "click", root.MyTabDeskSync.handleSaveSyncSettings);
+  safeAddEventListener(elements.gistSyncSwitch, "change", async () => {
     root.MyTabDeskSync.selectSyncProvider(elements.gistSyncSwitch.checked ? "gist" : "none");
     await root.MyTabDeskSync.saveSyncSettingsFromForm();
   });
-  elements.webdavSyncSwitch.addEventListener("change", async () => {
+  safeAddEventListener(elements.webdavSyncSwitch, "change", async () => {
     root.MyTabDeskSync.selectSyncProvider(elements.webdavSyncSwitch.checked ? "webdav" : "none");
     await root.MyTabDeskSync.saveSyncSettingsFromForm();
   });
-  elements.gistAutoSyncSwitch.addEventListener("change", root.MyTabDeskSync.saveSyncSettingsFromForm);
-  elements.webdavAutoSyncSwitch.addEventListener("change", root.MyTabDeskSync.saveSyncSettingsFromForm);
-  elements.gistUploadSyncBtn.addEventListener("click", () => root.MyTabDeskSync.uploadManualSync("gist"));
-  elements.gistDownloadSyncBtn.addEventListener("click", () => root.MyTabDeskSync.downloadManualSync("gist"));
-  elements.webdavUploadSyncBtn.addEventListener("click", () => root.MyTabDeskSync.uploadManualSync("webdav"));
-  elements.webdavDownloadSyncBtn.addEventListener("click", () => root.MyTabDeskSync.downloadManualSync("webdav"));
-  elements.encryptedBackupFileInput.addEventListener("change", root.MyTabDeskActions.importEncryptedBackupFile);
-  elements.searchInput.addEventListener("input", (event) => {
+  safeAddEventListener(elements.gistAutoSyncSwitch, "change", root.MyTabDeskSync.saveSyncSettingsFromForm);
+  safeAddEventListener(elements.webdavAutoSyncSwitch, "change", root.MyTabDeskSync.saveSyncSettingsFromForm);
+  safeAddEventListener(elements.gistUploadSyncBtn, "click", () => root.MyTabDeskSync.uploadManualSync("gist"));
+  safeAddEventListener(elements.gistDownloadSyncBtn, "click", () => root.MyTabDeskSync.downloadManualSync("gist"));
+  safeAddEventListener(elements.webdavUploadSyncBtn, "click", () => root.MyTabDeskSync.uploadManualSync("webdav"));
+  safeAddEventListener(elements.webdavDownloadSyncBtn, "click", () => root.MyTabDeskSync.downloadManualSync("webdav"));
+  safeAddEventListener(elements.encryptedBackupFileInput, "change", root.MyTabDeskActions.importEncryptedBackupFile);
+  safeAddEventListener(elements.searchInput, "input", (event) => {
     state.searchKeyword = event.target.value;
     root.MyTabDeskRender.renderGroups();
   });
-  elements.tabSearchInput.addEventListener("input", (event) => {
+  safeAddEventListener(elements.tabSearchInput, "input", (event) => {
     state.tabSearchKeyword = event.target.value;
     root.MyTabDeskRender.renderCurrentTabs();
   });
-  document.addEventListener("dragend", () => {
+  safeAddEventListener(document, "dragend", () => {
     state.draggedSpaceId = "";
     state.draggedGroupId = "";
     state.draggedLink = null;
     state.draggedTab = null;
   });
-  document.addEventListener("click", (event) => {
+  safeAddEventListener(document, "click", (event) => {
     if (!event.target.closest(".space-item") && !event.target.closest(".space-menu-panel")) {
       state.openSpaceMenuId = "";
       root.MyTabDeskRender.renderSpaces();
@@ -271,6 +306,8 @@ function bindElements() {
  * @returns {Promise<void>} 初始化完成后结束。
  */
 async function init() {
+  // 初始化前先清理可能存在的事件监听器，避免重复绑定
+  cleanupEventListeners();
   bindElements();
   state.data = app.ensureSyncSettings(await loadData());
   state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
@@ -281,10 +318,51 @@ async function init() {
   await root.MyTabDeskActions.refreshCurrentTabs();
 }
 
+/**
+ * 清理页面绑定的事件和状态，用于页面卸载或重置时调用。
+ *
+ * @returns {void}
+ */
+function destroy() {
+  /** 清理自动同步定时器。 */
+  if (state.autoSyncTimerId) {
+    clearTimeout(state.autoSyncTimerId);
+    state.autoSyncTimerId = 0;
+  }
+
+  /** 清理所有已注册的事件监听器，防止内存泄漏 */
+  cleanupEventListeners();
+
+  /** 清理所有状态。 */
+  state.data = null;
+  state.currentTabs = [];
+  state.searchKeyword = "";
+  state.tabSearchKeyword = "";
+  state.batchDeleteEnabled = false;
+  state.selectedLinkIds.clear();
+  state.draggedSpaceId = "";
+  state.draggedGroupId = "";
+  state.draggedLink = null;
+  state.draggedTab = null;
+  state.autoSyncRunning = false;
+  state.lastWorkspaceSnapshot = "";
+  state.openSpaceMenuId = "";
+  state.openLinkMenuId = "";
+  state.editingLinkContext = null;
+  state.appDialogResolver = null;
+  state.createSpaceMenuOpen = false;
+  state.createSpaceDialogOpen = false;
+  state.iconPickerSpaceId = "";
+  state.selectedSpaceIcon = "";
+  state.viewMode = "workspace";
+}
+
 root.MyTabDeskMain = {
   bindEvents,
   bindElements,
-  init
+  init,
+  destroy,
+  cleanupEventListeners
 };
 
 document.addEventListener("DOMContentLoaded", init);

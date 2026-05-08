@@ -19,6 +19,52 @@ const {
   saveData
 } = root.MyTabDeskUtils;
 const { showAlert } = root.MyTabDeskDialogs;
+const notifications = root.MyTabDeskNotifications || {};
+
+/**
+ * 默认重试次数。
+ */
+const DEFAULT_MAX_RETRIES = 3;
+
+/**
+ * 基础重试延迟（毫秒）。
+ */
+const BASE_RETRY_DELAY = 1000;
+
+/**
+ * 执行带超时和指数退避重试的网络请求。
+ *
+ * @param {string} url 请求地址。
+ * @param {object} options fetch 请求选项。
+ * @param {number} maxRetries 最大重试次数。
+ * @returns {Promise<Response>} fetch 响应对象。
+ * @throws {Error} 当请求超时或所有重试都失败时抛出错误。
+ */
+async function fetchWithRetry(url, options, maxRetries = DEFAULT_MAX_RETRIES) {
+  let lastError;
+
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      return await fetchWithTimeout(url, options);
+    } catch (error) {
+      lastError = error;
+
+      // 如果已经达到最大重试次数，或者错误是用户取消（AbortError），不再重试
+      if (error.name === "AbortError" || attempt >= maxRetries) {
+        throw error;
+      }
+
+      // 计算指数退避延迟
+      const delay = BASE_RETRY_DELAY * Math.pow(2, attempt);
+      console.warn(`请求失败，${delay}ms 后重试 (${attempt + 1}/${maxRetries}):`, error.message);
+
+      // 等待后再重试
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+  }
+
+  throw lastError;
+}
 
 /**
  * 从设置表单读取同步配置。
@@ -88,6 +134,9 @@ function selectSyncProvider(provider) {
 async function handleSaveSyncSettings() {
   await saveSyncSettingsFromForm();
   await showAlert("同步配置已保存。");
+  if (notifications.notifySuccess) {
+    notifications.notifySuccess("配置已保存", "同步设置已更新");
+  }
 }
 
 /**
@@ -215,6 +264,8 @@ async function runBidirectionalSync(sync, provider) {
 async function runAutoSyncNow() {
   /** 当前同步配置。 */
   const sync = getSyncSettings();
+  /** 已启用的同步服务商列表。 */
+  const providers = getEnabledSyncProviders(sync);
 
   if (state.autoSyncRunning || !isAutoSyncEnabled(sync) || !sync.autoSyncPendingAt) {
     return;
@@ -224,7 +275,10 @@ async function runAutoSyncNow() {
 
   try {
     validateSyncSettings();
-    await runBidirectionalSync(sync);
+
+    for (const provider of providers) {
+      await runBidirectionalSync(sync, provider);
+    }
   } catch (error) {
     sync.lastAutoSyncError = error.message || "自动同步失败";
     await saveData({ skipAutoSync: true });
@@ -253,7 +307,11 @@ function scheduleAutoSync() {
 
   state.autoSyncTimerId = window.setTimeout(() => {
     state.autoSyncTimerId = 0;
-    runAutoSyncNow();
+    try {
+      runAutoSyncNow();
+    } catch (error) {
+      console.error("自动同步调度失败：", error);
+    }
   }, 1200);
 }
 
@@ -347,7 +405,7 @@ async function uploadWebDav(sync, payload) {
   /** 解析后的 WebDAV 同步文件地址。 */
   const fileUrl = resolveSafeWebDavFileUrl(sync);
   /** WebDAV 上传响应。 */
-  const response = await fetchWithTimeout(fileUrl, {
+  const response = await fetchWithRetry(fileUrl, {
     method: "PUT",
     headers: {
       Authorization: createBasicAuthHeader(sync.webdavUsername, sync.webdavPassword),
@@ -372,7 +430,7 @@ async function downloadWebDav(sync) {
   /** 解析后的 WebDAV 同步文件地址。 */
   const fileUrl = resolveSafeWebDavFileUrl(sync);
   /** WebDAV 下载响应。 */
-  const response = await fetchWithTimeout(fileUrl, {
+  const response = await fetchWithRetry(fileUrl, {
     method: "GET",
     headers: {
       Authorization: createBasicAuthHeader(sync.webdavUsername, sync.webdavPassword)
@@ -416,7 +474,7 @@ async function uploadGist(sync, payload) {
   /** Gist 请求地址。 */
   const url = isNewGist ? "https://api.github.com/gists" : `https://api.github.com/gists/${gistId}`;
   /** Gist 上传响应。 */
-  const response = await fetchWithTimeout(url, {
+  const response = await fetchWithRetry(url, {
     method: isNewGist ? "POST" : "PATCH",
     headers: {
       Authorization: `Bearer ${sync.gistToken}`,
@@ -453,7 +511,7 @@ async function findMyTabDeskGist(sync) {
   /** Gist 列表请求地址。 */
   const url = "https://api.github.com/gists?per_page=100";
   /** Gist 列表响应。 */
-  const response = await fetchWithTimeout(url, {
+  const response = await fetchWithRetry(url, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${sync.gistToken}`,
@@ -502,7 +560,7 @@ async function downloadGist(sync) {
   }
 
   /** Gist 下载响应。 */
-  const response = await fetchWithTimeout(`https://api.github.com/gists/${gistId}`, {
+  const response = await fetchWithRetry(`https://api.github.com/gists/${gistId}`, {
     method: "GET",
     headers: {
       Authorization: `Bearer ${sync.gistToken}`,
@@ -561,7 +619,13 @@ async function uploadManualSync(provider) {
     await saveData({ skipAutoSync: true });
     root.MyTabDeskRender.renderSettingsStatus();
     await showAlert("已上传到云端。");
+    if (notifications.notifySuccess) {
+      notifications.notifySuccess("上传成功", "数据已同步到云端");
+    }
   } catch (error) {
+    if (notifications.notifyError) {
+      notifications.notifyError("上传失败", error.message || "同步到云端失败");
+    }
     await showAlert(error.message || "上传到云端失败。");
   }
 }
@@ -601,8 +665,14 @@ async function downloadManualSync(provider) {
 
     await saveData({ skipAutoSync: true });
     root.MyTabDeskRender.renderAll();
+    if (notifications.notifySuccess) {
+      notifications.notifySuccess("下载成功", "已用云端数据覆盖本地");
+    }
     await showAlert("已用云端数据覆盖本地。");
   } catch (error) {
+    if (notifications.notifyError) {
+      notifications.notifyError("下载失败", error.message || "从云端下载失败");
+    }
     await showAlert(error.message || "从云端下载失败。");
   }
 }
@@ -622,6 +692,7 @@ root.MyTabDeskSync = {
   validateSyncProviderSettings,
   validateSyncSettings,
   fetchWithTimeout,
+  fetchWithRetry,
   uploadWebDav,
   downloadWebDav,
   uploadGist,

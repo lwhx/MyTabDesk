@@ -13,8 +13,62 @@ const {
   clearElement,
   createTextElement,
   createFavicon,
-  hasChromeTabs
+  hasChromeTabs,
+  getCurrentTime
 } = root.MyTabDeskUtils;
+
+/**
+ * 渲染请求标记，用于合并连续触发多次的渲染请求。
+ */
+let pendingRenderRequest = false;
+
+/**
+ * 待执行的渲染任务队列。
+ */
+let scheduledRenderTasks = new Set();
+
+/**
+ * 使用 requestAnimationFrame 调度渲染任务，避免连续触发导致的重复渲染。
+ *
+ * @param {string} taskName 任务名称。
+ * @param {Function} renderFn 渲染函数。
+ * @returns {void}
+ */
+function scheduleRender(taskName, renderFn) {
+  scheduledRenderTasks.add(taskName);
+
+  if (pendingRenderRequest) {
+    return;
+  }
+
+  pendingRenderRequest = true;
+  requestAnimationFrame(() => {
+    pendingRenderRequest = false;
+    scheduledRenderTasks.clear();
+    renderFn();
+  });
+}
+
+/**
+ * 批量渲染更新，合并多个渲染请求为一次 DOM 更新。
+ *
+ * @param {Function} renderFn 渲染函数。
+ * @returns {void}
+ */
+function batchRender(renderFn) {
+  if (pendingRenderRequest) {
+    // 如果已有待处理的渲染请求，只更新任务队列
+    scheduledRenderTasks.add("batch");
+    return;
+  }
+
+  pendingRenderRequest = true;
+  requestAnimationFrame(() => {
+    pendingRenderRequest = false;
+    scheduledRenderTasks.clear();
+    renderFn();
+  });
+}
 
 /**
  * 应用主题、左右栏折叠和批量删除栏等布局状态。
@@ -46,20 +100,35 @@ function applyLayoutSettings() {
 
 /**
  * 重新渲染页面主体区域。
+ * 使用批量渲染优化，避免连续触发导致的多次 DOM 更新。
  *
  * @returns {void}
  */
 function renderAll() {
-  applyLayoutSettings();
-  renderSpaces();
-
-  if (state.viewMode === "settings") {
-    renderSettingsStatus();
+  if (pendingRenderRequest) {
+    // 如果已有待处理的渲染请求，合并到下一帧
+    scheduledRenderTasks.add("all");
     return;
   }
 
-  renderActiveSpaceHeader();
-  renderGroups();
+  pendingRenderRequest = true;
+  requestAnimationFrame(() => {
+    pendingRenderRequest = false;
+
+    const needsRenderAll = scheduledRenderTasks.has("all");
+    scheduledRenderTasks.clear();
+
+    applyLayoutSettings();
+    renderSpaces();
+
+    if (state.viewMode === "settings") {
+      renderSettingsStatus();
+      return;
+    }
+
+    renderActiveSpaceHeader();
+    renderGroups();
+  });
 }
 
 /**
@@ -102,12 +171,16 @@ function renderSpaces() {
     menuButton.setAttribute("aria-label", `打开空间 ${space.name} 的更多操作`);
 
     item.addEventListener("click", async () => {
-      state.data.activeSpaceId = space.id;
-      state.viewMode = "workspace";
-      state.openSpaceMenuId = "";
-      state.createSpaceMenuOpen = false;
-      await root.MyTabDeskUtils.saveData();
-      renderAll();
+      try {
+        state.data.activeSpaceId = space.id;
+        state.viewMode = "workspace";
+        state.openSpaceMenuId = "";
+        state.createSpaceMenuOpen = false;
+        await root.MyTabDeskUtils.saveData();
+        renderAll();
+      } catch (error) {
+        console.error("切换空间失败：", error);
+      }
     });
 
     item.addEventListener("dragstart", (event) => {
@@ -127,7 +200,11 @@ function renderSpaces() {
     item.addEventListener("drop", async (event) => {
       event.preventDefault();
       item.classList.remove("drag-over");
-      await root.MyTabDeskActions.handleSpaceDrop(space.id);
+      try {
+        await root.MyTabDeskActions.handleSpaceDrop(space.id);
+      } catch (error) {
+        console.error("处理空间拖放失败：", error);
+      }
     });
 
     menuButton.addEventListener("click", (event) => {
@@ -235,7 +312,10 @@ function renderSpaceIconPicker() {
     button.setAttribute("aria-label", `选择图标 ${icon}`);
 
     if (state.selectedSpaceIcon === icon) {
-      button.classList.add("active");
+      button.classList.add("selected");
+      button.setAttribute("aria-pressed", "true");
+    } else {
+      button.setAttribute("aria-pressed", "false");
     }
 
     button.addEventListener("click", () => {
@@ -261,7 +341,7 @@ async function confirmSpaceIconChange() {
   }
 
   space.icon = state.selectedSpaceIcon;
-  space.updatedAt = Date.now();
+  space.updatedAt = getCurrentTime();
   closeSpaceIconPicker();
   await root.MyTabDeskUtils.saveData();
   renderAll();
@@ -324,7 +404,7 @@ function renderGroups() {
   hideEmptyState();
 
   for (const group of visibleGroups) {
-    elements.groupList.appendChild(createGroupElement(group));
+    elements.groupList.appendChild(createGroupElement(group, activeSpace));
   }
 }
 
@@ -354,11 +434,10 @@ function hideEmptyState() {
  * 创建单个分组容器。
  *
  * @param {object} group 分组数据。
+ * @param {object} activeSpace 当前激活空间（用于获取空间ID）。
  * @returns {HTMLElement} 分组 DOM 元素。
  */
-function createGroupElement(group) {
-  /** 当前激活空间。 */
-  const activeSpace = getActiveSpace();
+function createGroupElement(group, activeSpace) {
   /** 分组容器元素。 */
   const groupElement = document.createElement("section");
   groupElement.className = "group-section";
@@ -369,16 +448,17 @@ function createGroupElement(group) {
     groupElement.classList.add("pinned");
   }
 
+  if (state.movingGroupId === group.id) {
+    groupElement.classList.add("move-menu-open");
+  }
+
   /** 分组头部区域。 */
   const header = document.createElement("header");
   header.className = "group-header";
-  header.title = group.collapsed ? "点击展开分组" : "点击收起分组";
-  header.addEventListener("click", () => root.MyTabDeskActions.toggleGroup(group.id));
 
   /** 分组左侧信息区域。 */
   const headerInfo = document.createElement("div");
   headerInfo.className = "group-header-info";
-  headerInfo.addEventListener("click", (event) => event.stopPropagation());
 
   /** 分组折叠按钮。 */
   const toggleButton = document.createElement("button");
@@ -413,7 +493,11 @@ function createGroupElement(group) {
   openAllButton.type = "button";
   openAllButton.className = "secondary-button group-action-button";
   openAllButton.textContent = "打开全部";
-  openAllButton.addEventListener("click", () => root.MyTabDeskActions.openGroup(group.id));
+  openAllButton.setAttribute("aria-label", `打开分组 ${group.name} 的全部链接`);
+  openAllButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    root.MyTabDeskActions.openGroup(group.id);
+  });
   /** 移动分组区域。 */
   const moveWrap = document.createElement("div");
   moveWrap.className = "group-move-wrap";
@@ -447,7 +531,7 @@ function createGroupElement(group) {
   groupElement.appendChild(header);
 
   if (state.movingGroupId === group.id) {
-    moveWrap.appendChild(createMoveGroupMenuElement(group));
+    moveWrap.appendChild(createMoveGroupMenuElement(group, activeSpace));
   }
 
   if (!group.collapsed) {
@@ -474,7 +558,11 @@ function createGroupElement(group) {
     groupElement.addEventListener("drop", async (event) => {
       event.preventDefault();
       groupElement.classList.remove("drag-over");
-      await root.MyTabDeskActions.handleGroupDrop(activeSpace.id, group.id);
+      try {
+        await root.MyTabDeskActions.handleGroupDrop(activeSpace.id, group.id);
+      } catch (error) {
+        console.error("处理分组拖放失败：", error);
+      }
     });
 
     linkGrid.addEventListener("dragover", (event) => {
@@ -490,7 +578,11 @@ function createGroupElement(group) {
       event.preventDefault();
       event.stopPropagation();
       linkGrid.classList.remove("drag-over");
-      await root.MyTabDeskActions.handleLinkGridDrop(activeSpace.id, group.id);
+      try {
+        await root.MyTabDeskActions.handleLinkGridDrop(activeSpace.id, group.id);
+      } catch (error) {
+        console.error("处理链接网格拖放失败：", error);
+      }
     });
 
     if (group.links.length === 0) {
@@ -527,7 +619,11 @@ function createGroupNameElement(group) {
     input.addEventListener("keydown", async (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
-        await root.MyTabDeskActions.renameGroup(group.id, input.value);
+        try {
+          await root.MyTabDeskActions.renameGroup(group.id, input.value);
+        } catch (error) {
+          console.error("重命名分组失败：", error);
+        }
       }
 
       if (event.key === "Escape") {
@@ -535,7 +631,13 @@ function createGroupNameElement(group) {
         renderGroups();
       }
     });
-    input.addEventListener("blur", () => root.MyTabDeskActions.renameGroup(group.id, input.value));
+    input.addEventListener("blur", () => {
+      try {
+        root.MyTabDeskActions.renameGroup(group.id, input.value);
+      } catch (error) {
+        console.error("重命名分组失败：", error);
+      }
+    });
     requestAnimationFrame(() => {
       input.focus();
       input.select();
@@ -548,7 +650,7 @@ function createGroupNameElement(group) {
   button.type = "button";
   button.className = "group-name-button";
   button.title = "点击编辑分组名称";
-  button.textContent = `${group.pinned ? "📌 " : ""}${group.name}`;
+  button.textContent = `${group.pinned ? "◆ " : ""}${group.name}`;
   button.addEventListener("click", () => {
     state.editingGroupId = group.id;
     state.movingGroupId = "";
@@ -561,11 +663,10 @@ function createGroupNameElement(group) {
  * 创建移动分组的空间选择菜单。
  *
  * @param {object} group 待移动分组。
+ * @param {object} activeSpace 当前激活空间。
  * @returns {HTMLElement} 移动分组菜单元素。
  */
-function createMoveGroupMenuElement(group) {
-  /** 当前激活空间。 */
-  const activeSpace = getActiveSpace();
+function createMoveGroupMenuElement(group, activeSpace) {
   /** 可移动到的目标空间列表。 */
   const targetSpaces = state.data.spaces.filter((space) => activeSpace && space.id !== activeSpace.id);
   /** 移动分组菜单容器。 */
@@ -746,7 +847,11 @@ function createLinkElement(groupId, link) {
     event.preventDefault();
     event.stopPropagation();
     card.classList.remove("drag-over");
-    await root.MyTabDeskActions.handleLinkDrop(groupId, link.id);
+    try {
+      await root.MyTabDeskActions.handleLinkDrop(groupId, link.id);
+    } catch (error) {
+      console.error("处理链接拖放失败：", error);
+    }
   });
 
   if (state.batchDeleteEnabled) {
@@ -796,7 +901,11 @@ function createLinkActionMenuElement(groupId, link) {
   deleteButton.addEventListener("click", async (event) => {
     event.stopPropagation();
     state.openLinkMenuId = "";
-    await root.MyTabDeskActions.deleteLink(groupId, link.id);
+    try {
+      await root.MyTabDeskActions.deleteLink(groupId, link.id);
+    } catch (error) {
+      console.error("删除链接失败：", error);
+    }
   });
 
   menu.append(editButton, deleteButton);
@@ -854,7 +963,11 @@ function renderCurrentTabs() {
     saveButton.setAttribute("aria-label", `保存标签 ${tab.title || tab.url}`);
     saveButton.addEventListener("click", async (event) => {
       event.stopPropagation();
-      await root.MyTabDeskActions.saveSingleTabToGroup(tab);
+      try {
+        await root.MyTabDeskActions.saveSingleTabToGroup(tab);
+      } catch (error) {
+        console.error("保存标签失败：", error);
+      }
     });
 
     item.append(createFavicon(tab.favIconUrl, tab.title || tab.url), content, saveButton);

@@ -7,7 +7,7 @@ const STORAGE_KEY = "my_tab_desk_data";
 /**
  * 当前应用版本号，用于备份元信息和 manifest 版本保持一致。
  */
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.1.0";
 
 /**
  * 加密备份文件版本号，用于后续升级备份格式。
@@ -70,6 +70,37 @@ function getDefaultSpaceIcon() {
  */
 function getCurrentTime() {
   return Date.now();
+}
+
+/**
+ * 安全获取嵌套对象属性值。
+ *
+ * @param {object} obj 源对象。
+ * @param {string[]} keys 属性路径数组。
+ * @param {*} defaultValue 默认值。
+ * @returns {*} 属性值或默认值。
+ */
+function getNestedValue(obj, keys, defaultValue) {
+  let current = obj;
+  for (const key of keys) {
+    if (current === null || current === undefined || typeof current !== "object") {
+      return defaultValue;
+    }
+    current = current[key];
+  }
+  return current !== undefined ? current : defaultValue;
+}
+
+/**
+ * 获取嵌套对象属性值（支持点号分隔的路径字符串）。
+ *
+ * @param {object} obj 源对象。
+ * @param {string} path 属性路径，如 "settings.sync.webdavUrl"。
+ * @param {*} defaultValue 默认值。
+ * @returns {*} 属性值或默认值。
+ */
+function getPathValue(obj, path, defaultValue) {
+  return getNestedValue(obj, path.split("."), defaultValue);
 }
 
 /**
@@ -347,29 +378,29 @@ function normalizeData(rawData) {
     activeSpaceId: activeSpaceExists ? rawData.activeSpaceId : spaces[0].id,
     spaces,
     settings: {
-      theme: rawData.settings && rawData.settings.theme ? rawData.settings.theme : "light",
-      rightPanelCollapsed: Boolean(rawData.settings && rawData.settings.rightPanelCollapsed),
-      sidebarCollapsed: Boolean(rawData.settings && rawData.settings.sidebarCollapsed),
+      theme: getPathValue(rawData, "settings.theme", "light"),
+      rightPanelCollapsed: getPathValue(rawData, "settings.rightPanelCollapsed", false),
+      sidebarCollapsed: getPathValue(rawData, "settings.sidebarCollapsed", false),
       sync: {
-        deviceId: rawData.settings && rawData.settings.sync && rawData.settings.sync.deviceId ? rawData.settings.sync.deviceId : "",
-        deviceName: rawData.settings && rawData.settings.sync && rawData.settings.sync.deviceName ? rawData.settings.sync.deviceName : DEFAULT_SYNC_SETTINGS.deviceName,
-        mode: rawData.settings && rawData.settings.sync && rawData.settings.sync.mode ? rawData.settings.sync.mode : DEFAULT_SYNC_SETTINGS.mode,
-        lastBackupAt: rawData.settings && rawData.settings.sync && typeof rawData.settings.sync.lastBackupAt === "number" ? rawData.settings.sync.lastBackupAt : DEFAULT_SYNC_SETTINGS.lastBackupAt,
-        lastImportAt: rawData.settings && rawData.settings.sync && typeof rawData.settings.sync.lastImportAt === "number" ? rawData.settings.sync.lastImportAt : DEFAULT_SYNC_SETTINGS.lastImportAt,
-        provider: rawData.settings && rawData.settings.sync && rawData.settings.sync.provider ? rawData.settings.sync.provider : DEFAULT_SYNC_SETTINGS.provider,
-        webdavUrl: rawData.settings && rawData.settings.sync && rawData.settings.sync.webdavUrl ? rawData.settings.sync.webdavUrl : DEFAULT_SYNC_SETTINGS.webdavUrl,
-        webdavUsername: rawData.settings && rawData.settings.sync && rawData.settings.sync.webdavUsername ? rawData.settings.sync.webdavUsername : DEFAULT_SYNC_SETTINGS.webdavUsername,
-        webdavPassword: rawData.settings && rawData.settings.sync && rawData.settings.sync.webdavPassword ? rawData.settings.sync.webdavPassword : DEFAULT_SYNC_SETTINGS.webdavPassword,
-        webdavFilename: rawData.settings && rawData.settings.sync && rawData.settings.sync.webdavFilename ? rawData.settings.sync.webdavFilename : DEFAULT_SYNC_SETTINGS.webdavFilename,
-        webdavAutoSyncEnabled: Boolean(rawData.settings && rawData.settings.sync && rawData.settings.sync.webdavAutoSyncEnabled),
-        gistToken: rawData.settings && rawData.settings.sync && rawData.settings.sync.gistToken ? rawData.settings.sync.gistToken : DEFAULT_SYNC_SETTINGS.gistToken,
-        gistId: rawData.settings && rawData.settings.sync && rawData.settings.sync.gistId ? rawData.settings.sync.gistId : DEFAULT_SYNC_SETTINGS.gistId,
-        gistFilename: rawData.settings && rawData.settings.sync && rawData.settings.sync.gistFilename ? rawData.settings.sync.gistFilename : DEFAULT_SYNC_SETTINGS.gistFilename,
-        gistAutoSyncEnabled: Boolean(rawData.settings && rawData.settings.sync && rawData.settings.sync.gistAutoSyncEnabled),
-        autoSyncPendingAt: rawData.settings && rawData.settings.sync && typeof rawData.settings.sync.autoSyncPendingAt === "number" ? rawData.settings.sync.autoSyncPendingAt : DEFAULT_SYNC_SETTINGS.autoSyncPendingAt,
-        lastAutoSyncAt: rawData.settings && rawData.settings.sync && typeof rawData.settings.sync.lastAutoSyncAt === "number" ? rawData.settings.sync.lastAutoSyncAt : DEFAULT_SYNC_SETTINGS.lastAutoSyncAt,
-        lastAutoSyncError: rawData.settings && rawData.settings.sync && rawData.settings.sync.lastAutoSyncError ? rawData.settings.sync.lastAutoSyncError : DEFAULT_SYNC_SETTINGS.lastAutoSyncError,
-        lastSyncAt: rawData.settings && rawData.settings.sync && typeof rawData.settings.sync.lastSyncAt === "number" ? rawData.settings.sync.lastSyncAt : DEFAULT_SYNC_SETTINGS.lastSyncAt
+        deviceId: getPathValue(rawData, "settings.sync.deviceId", ""),
+        deviceName: getPathValue(rawData, "settings.sync.deviceName", DEFAULT_SYNC_SETTINGS.deviceName),
+        mode: getPathValue(rawData, "settings.sync.mode", DEFAULT_SYNC_SETTINGS.mode),
+        lastBackupAt: getPathValue(rawData, "settings.sync.lastBackupAt", DEFAULT_SYNC_SETTINGS.lastBackupAt),
+        lastImportAt: getPathValue(rawData, "settings.sync.lastImportAt", DEFAULT_SYNC_SETTINGS.lastImportAt),
+        provider: getPathValue(rawData, "settings.sync.provider", DEFAULT_SYNC_SETTINGS.provider),
+        webdavUrl: getPathValue(rawData, "settings.sync.webdavUrl", DEFAULT_SYNC_SETTINGS.webdavUrl),
+        webdavUsername: getPathValue(rawData, "settings.sync.webdavUsername", DEFAULT_SYNC_SETTINGS.webdavUsername),
+        webdavPassword: getPathValue(rawData, "settings.sync.webdavPassword", DEFAULT_SYNC_SETTINGS.webdavPassword),
+        webdavFilename: getPathValue(rawData, "settings.sync.webdavFilename", DEFAULT_SYNC_SETTINGS.webdavFilename),
+        webdavAutoSyncEnabled: Boolean(getPathValue(rawData, "settings.sync.webdavAutoSyncEnabled", false)),
+        gistToken: getPathValue(rawData, "settings.sync.gistToken", DEFAULT_SYNC_SETTINGS.gistToken),
+        gistId: getPathValue(rawData, "settings.sync.gistId", DEFAULT_SYNC_SETTINGS.gistId),
+        gistFilename: getPathValue(rawData, "settings.sync.gistFilename", DEFAULT_SYNC_SETTINGS.gistFilename),
+        gistAutoSyncEnabled: Boolean(getPathValue(rawData, "settings.sync.gistAutoSyncEnabled", false)),
+        autoSyncPendingAt: getPathValue(rawData, "settings.sync.autoSyncPendingAt", DEFAULT_SYNC_SETTINGS.autoSyncPendingAt),
+        lastAutoSyncAt: getPathValue(rawData, "settings.sync.lastAutoSyncAt", DEFAULT_SYNC_SETTINGS.lastAutoSyncAt),
+        lastAutoSyncError: getPathValue(rawData, "settings.sync.lastAutoSyncError", DEFAULT_SYNC_SETTINGS.lastAutoSyncError),
+        lastSyncAt: getPathValue(rawData, "settings.sync.lastSyncAt", DEFAULT_SYNC_SETTINGS.lastSyncAt)
       }
     }
   };
@@ -403,20 +434,20 @@ function migrateData(data) {
  * @returns {boolean} 可以保存时返回 true，否则返回 false。
  */
 function isValidTabUrl(url) {
-  if (!url) {
+  if (!url || typeof url !== "string") {
     return false;
   }
 
-  /** 不允许保存的浏览器内部协议前缀。 */
-  const blockedPrefixes = [
-    "chrome://",
-    "edge://",
-    "about:",
-    "chrome-extension://",
-    "devtools://"
-  ];
+  /** 去除前后空白后的标签页 URL。 */
+  const normalizedUrl = url.trim();
 
-  return !blockedPrefixes.some((prefix) => url.startsWith(prefix));
+  try {
+    /** 解析后的标准 URL 对象。 */
+    const parsedUrl = new URL(normalizedUrl);
+    return parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:";
+  } catch (error) {
+    return false;
+  }
 }
 
 /**
@@ -1578,6 +1609,20 @@ async function createEncryptedBackup(data, password, deviceId) {
 }
 
 /**
+ * 判断备份对象是否为旧版 XOR 加密备份。
+ *
+ * @param {object} backupData 解析后的备份对象。
+ * @returns {boolean} 是旧版 XOR 加密备份时返回 true。
+ */
+function isLegacyXorEncryptedBackup(backupData) {
+  if (!backupData || backupData.encryption || backupData.salt || backupData.iv || backupData.iterations) {
+    return false;
+  }
+
+  return backupData.backupVersion === 1 && typeof backupData.payload === "string";
+}
+
+/**
  * 从加密备份文本恢复数据。
  *
  * @param {string} text 加密备份 JSON 文本。
@@ -1607,9 +1652,13 @@ async function restoreEncryptedBackup(text, password) {
   let plainText = "";
 
   try {
-    plainText = backupData.encryption === "PBKDF2-SHA256-AES-GCM"
-      ? await aesGcmDecrypt(backupData, password)
-      : await xorDecrypt(backupData.payload, password);
+    if (backupData.encryption === "PBKDF2-SHA256-AES-GCM") {
+      plainText = await aesGcmDecrypt(backupData, password);
+    } else if (isLegacyXorEncryptedBackup(backupData)) {
+      plainText = await xorDecrypt(backupData.payload, password);
+    } else {
+      throw new Error("不支持的加密备份格式");
+    }
   } catch (error) {
     throw new Error("密码错误或文件损坏");
   }
@@ -1711,7 +1760,9 @@ const tabdeskCoreApi = {
   moveLinkBetweenGroups,
   updateLink,
   addLinksToGroup,
-  clearAllData
+  clearAllData,
+  getNestedValue,
+  getPathValue
 };
 
 if (typeof module !== "undefined") {

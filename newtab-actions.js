@@ -18,14 +18,20 @@ const {
   reorderLinks,
   moveLinkBetweenGroups,
   updateLink,
-  addLinksToGroup
+  addLinksToGroup,
+  findSpace,
+  findGroupInSpace,
+  findGroup,
+  findLinkInGroup,
+  findLink
 } = app;
 const {
   getActiveSpace,
   createWorkspaceSnapshot,
   hasChromeTabs,
   saveData,
-  formatDateTime
+  formatDateTime,
+  markDirty
 } = root.MyTabDeskUtils;
 const { showAlert, showConfirm, showPrompt } = root.MyTabDeskDialogs;
 
@@ -36,6 +42,28 @@ const { showAlert, showConfirm, showPrompt } = root.MyTabDeskDialogs;
  */
 async function createBlankSpaceFromMenu() {
   root.MyTabDeskRender.openCreateSpaceDialog();
+}
+
+/**
+ * 保存数据并标记为脏，用于数据变更后的统一保存。
+ *
+ * @param {object} options 保存选项。
+ * @returns {Promise<void>}
+ */
+async function persistWithDirty(options) {
+  markDirty();
+  await saveData(options);
+}
+
+/**
+ * 带脏标记的跳过自动同步保存。
+ *
+ * @param {object} options 保存选项。
+ * @returns {Promise<void>}
+ */
+async function persistWithDirtySkipSync(options) {
+  markDirty();
+  await saveData({ ...options, skipAutoSync: true });
 }
 
 /**
@@ -84,7 +112,7 @@ async function createSpace(name) {
   }
 
   /** 当前时间戳。 */
-  const now = Date.now();
+  const now = getCurrentTime();
   /** 新空间数据。 */
   const space = {
     id: createId("space"),
@@ -98,7 +126,7 @@ async function createSpace(name) {
   state.data.spaces.push(space);
   state.data.activeSpaceId = space.id;
   root.MyTabDeskRender.closeCreateSpaceDialog();
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -110,7 +138,7 @@ async function createSpace(name) {
  */
 async function deleteSpace(spaceId) {
   /** 待删除空间。 */
-  const space = state.data.spaces.find((item) => item.id === spaceId);
+  const space = findSpace(state.data, spaceId);
 
   if (!space) {
     return;
@@ -135,7 +163,7 @@ async function deleteSpace(spaceId) {
   }
 
   state.openSpaceMenuId = "";
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -163,7 +191,7 @@ async function createGroup() {
   }
 
   /** 当前时间戳。 */
-  const now = Date.now();
+  const now = getCurrentTime();
   activeSpace.groups.unshift({
     id: createId("group"),
     name: name.trim(),
@@ -175,7 +203,7 @@ async function createGroup() {
   });
   activeSpace.updatedAt = now;
 
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -189,7 +217,7 @@ async function deleteGroup(groupId) {
   /** 当前激活空间。 */
   const activeSpace = getActiveSpace();
   /** 待删除分组。 */
-  const group = activeSpace && activeSpace.groups.find((item) => item.id === groupId);
+  const group = findGroupInSpace(activeSpace, groupId);
 
   if (!activeSpace || !group) {
     return;
@@ -203,9 +231,9 @@ async function deleteGroup(groupId) {
   }
 
   activeSpace.groups = activeSpace.groups.filter((item) => item.id !== groupId);
-  activeSpace.updatedAt = Date.now();
+  activeSpace.updatedAt = getCurrentTime();
 
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -219,17 +247,17 @@ async function toggleGroup(groupId) {
   /** 当前激活空间。 */
   const activeSpace = getActiveSpace();
   /** 待切换的分组。 */
-  const group = activeSpace && activeSpace.groups.find((item) => item.id === groupId);
+  const group = findGroupInSpace(activeSpace, groupId);
 
   if (!group) {
     return;
   }
 
   group.collapsed = !group.collapsed;
-  group.updatedAt = Date.now();
-  activeSpace.updatedAt = Date.now();
+  group.updatedAt = getCurrentTime();
+  activeSpace.updatedAt = getCurrentTime();
 
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -243,18 +271,18 @@ async function toggleGroupPinned(groupId) {
   /** 当前激活空间。 */
   const activeSpace = getActiveSpace();
   /** 待切换固定状态的分组。 */
-  const group = activeSpace && activeSpace.groups.find((item) => item.id === groupId);
+  const group = findGroupInSpace(activeSpace, groupId);
 
   if (!group) {
     return;
   }
 
   group.pinned = !group.pinned;
-  group.updatedAt = Date.now();
-  activeSpace.updatedAt = Date.now();
+  group.updatedAt = getCurrentTime();
+  activeSpace.updatedAt = getCurrentTime();
   state.draggedGroupId = "";
 
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -320,7 +348,7 @@ async function moveGroupToSpace(groupId, targetSpaceId) {
   }
 
   /** 当前时间戳。 */
-  const now = Date.now();
+  const now = getCurrentTime();
   /** 移动后的分组。 */
   const movedGroup = {
     ...group,
@@ -335,7 +363,7 @@ async function moveGroupToSpace(groupId, targetSpaceId) {
   state.movingGroupId = "";
   state.draggedGroupId = "";
 
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
   await showAlert(`已将“${group.name}”移动到“${targetSpace.name}”，分组名称未修改。`, "移动完成");
 }
@@ -351,7 +379,7 @@ async function renameGroup(groupId, name) {
   /** 当前激活空间。 */
   const activeSpace = getActiveSpace();
   /** 待重命名的分组。 */
-  const group = activeSpace && activeSpace.groups.find((item) => item.id === groupId);
+  const group = findGroupInSpace(activeSpace, groupId);
 
   if (!group) {
     return;
@@ -367,10 +395,10 @@ async function renameGroup(groupId, name) {
   }
 
   group.name = trimmedName;
-  group.updatedAt = Date.now();
-  activeSpace.updatedAt = Date.now();
+  group.updatedAt = getCurrentTime();
+  activeSpace.updatedAt = getCurrentTime();
 
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -385,9 +413,9 @@ function openEditLinkDialog(groupId, linkId) {
   /** 当前激活空间。 */
   const activeSpace = getActiveSpace();
   /** 链接所属分组。 */
-  const group = activeSpace && activeSpace.groups.find((item) => item.id === groupId);
+  const group = findGroupInSpace(activeSpace, groupId);
   /** 待编辑链接。 */
-  const link = group && group.links.find((item) => item.id === linkId);
+  const link = findLinkInGroup(group, linkId);
 
   if (!activeSpace || !group || !link) {
     return;
@@ -461,7 +489,7 @@ async function submitEditLinkDialog() {
     favIconUrl
   });
   closeEditLinkDialog();
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -476,9 +504,9 @@ async function deleteLink(groupId, linkId) {
   /** 当前激活空间。 */
   const activeSpace = getActiveSpace();
   /** 目标分组。 */
-  const group = activeSpace && activeSpace.groups.find((item) => item.id === groupId);
+  const group = findGroupInSpace(activeSpace, groupId);
   /** 目标链接。 */
-  const link = group && group.links.find((item) => item.id === linkId);
+  const link = findLinkInGroup(group, linkId);
 
   if (!activeSpace || !group || !link) {
     return;
@@ -492,10 +520,10 @@ async function deleteLink(groupId, linkId) {
   }
 
   group.links = group.links.filter((item) => item.id !== linkId);
-  group.updatedAt = Date.now();
-  activeSpace.updatedAt = Date.now();
+  group.updatedAt = getCurrentTime();
+  activeSpace.updatedAt = getCurrentTime();
   state.selectedLinkIds.delete(linkId);
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -529,7 +557,7 @@ async function openGroup(groupId) {
   /** 当前激活空间。 */
   const activeSpace = getActiveSpace();
   /** 目标分组。 */
-  const group = activeSpace && activeSpace.groups.find((item) => item.id === groupId);
+  const group = findGroupInSpace(activeSpace, groupId);
 
   if (!group || !Array.isArray(group.links) || group.links.length === 0) {
     await showAlert("该分组没有可打开的链接。", "无法打开");
@@ -629,7 +657,7 @@ async function saveCurrentTabsToGroup() {
   }
 
   state.data = addLinksToGroup(state.data, activeSpace.id, targetGroup.id, tabsToLinks(state.currentTabs));
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
   await showAlert(`已保存到分组「${targetGroup.name}」。`);
 }
@@ -673,7 +701,7 @@ async function saveSingleTabToGroup(tab) {
   }
 
   state.data = addLinksToGroup(state.data, activeSpace.id, targetGroup.id, tabsToLinks([tab]));
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
   await showAlert(`已保存标签到分组「${targetGroup.name}」。`);
 }
@@ -707,8 +735,13 @@ function downloadTextFile(filename, content) {
  */
 function exportCurrentData() {
   /** 备份文件名。 */
-  const filename = `mytabdesk-backup-${formatDateTime(Date.now()).replace(/[: ]/g, "-")}.json`;
+  const filename = `mytabdesk-backup-${formatDateTime(getCurrentTime()).replace(/[: ]/g, "-")}.json`;
   downloadTextFile(filename, exportData(state.data));
+
+  // 显示导出成功通知
+  if (root.MyTabDeskNotifications) {
+    root.MyTabDeskNotifications.notifySuccess("导出成功", "数据已导出到文件");
+  }
 }
 
 /**
@@ -719,7 +752,7 @@ function exportCurrentData() {
  */
 function exportSpace(spaceId) {
   /** 待导出的空间。 */
-  const space = state.data.spaces.find((item) => item.id === spaceId);
+  const space = findSpace(state.data, spaceId);
 
   if (!space) {
     return;
@@ -792,8 +825,21 @@ async function importSelectedFile(event) {
 
     /** 解析并迁移后的导入数据。 */
     const importedData = importData(text);
+    /** 导入数据与本地数据的冲突检测结果。 */
+    const conflict = detectImportConflict(state.data, importedData);
+    /** 覆盖当前数据前的确认提示列表。 */
+    const confirmMessages = ["导入会覆盖当前所有本地数据，确定继续吗？"];
+
+    if (conflict.isOlder) {
+      confirmMessages.push("导入文件可能旧于当前本地数据，继续导入可能覆盖新数据。");
+    }
+
+    if (conflict.isDifferentDevice) {
+      confirmMessages.push("该备份来自另一台设备。");
+    }
+
     /** 覆盖当前数据前的用户确认结果。 */
-    const confirmed = await showConfirm("导入会覆盖当前所有本地数据，确定继续吗？");
+    const confirmed = await showConfirm(confirmMessages.join("\n"));
 
     if (!confirmed) {
       return;
@@ -803,11 +849,21 @@ async function importSelectedFile(event) {
     state.selectedLinkIds.clear();
     state.batchDeleteEnabled = false;
     state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
-    await saveData({ skipAutoSync: true });
+    await persistWithDirtySkipSync();
     root.MyTabDeskRender.renderAll();
     await showAlert("数据导入成功。");
   } catch (error) {
-    await showAlert(error.message || "数据导入失败，请检查文件内容。");
+    let errorMessage = "数据导入失败，请检查文件内容。";
+    if (error.message) {
+      if (error.message.includes("JSON")) {
+        errorMessage = "文件格式错误，请选择有效的 JSON 文件。";
+      } else if (error.message.includes("version")) {
+        errorMessage = "备份文件版本不支持，请升级应用。";
+      } else {
+        errorMessage = "导入失败：" + error.message;
+      }
+    }
+    await showAlert(errorMessage);
   } finally {
     state.importMode = "data";
   }
@@ -869,7 +925,7 @@ async function importSpaceFromText(text) {
 
   state.data.spaces.push(space);
   state.data.activeSpaceId = space.id;
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
   await showAlert("空间导入成功。");
 }
@@ -890,7 +946,7 @@ async function clearData() {
   state.data = clearAllData();
   state.selectedLinkIds.clear();
   state.batchDeleteEnabled = false;
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -901,7 +957,7 @@ async function clearData() {
  */
 async function toggleTheme() {
   state.data.settings.theme = state.data.settings.theme === "dark" ? "light" : "dark";
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -912,7 +968,7 @@ async function toggleTheme() {
  */
 async function toggleSidebar() {
   state.data.settings.sidebarCollapsed = !state.data.settings.sidebarCollapsed;
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -923,7 +979,7 @@ async function toggleSidebar() {
  */
 async function toggleTabsPanel() {
   state.data.settings.rightPanelCollapsed = !state.data.settings.rightPanelCollapsed;
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -981,13 +1037,13 @@ async function confirmBatchDelete() {
 
   for (const group of activeSpace.groups) {
     group.links = group.links.filter((link) => !state.selectedLinkIds.has(link.id));
-    group.updatedAt = Date.now();
+    group.updatedAt = getCurrentTime();
   }
 
-  activeSpace.updatedAt = Date.now();
+  activeSpace.updatedAt = getCurrentTime();
   state.selectedLinkIds.clear();
   state.batchDeleteEnabled = false;
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -1004,7 +1060,7 @@ async function handleSpaceDrop(targetSpaceId) {
 
   state.data = reorderSpaces(state.data, state.draggedSpaceId, targetSpaceId);
   state.draggedSpaceId = "";
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -1026,11 +1082,11 @@ async function handleGroupDrop(spaceId, targetGroupId) {
   }
 
   /** 当前操作空间。 */
-  const space = state.data.spaces.find((item) => item.id === spaceId);
+  const space = findSpace(state.data, spaceId);
   /** 正在拖拽的分组。 */
-  const sourceGroup = space && space.groups.find((item) => item.id === state.draggedGroupId);
+  const sourceGroup = findGroupInSpace(space, state.draggedGroupId);
   /** 放置目标分组。 */
-  const targetGroup = space && space.groups.find((item) => item.id === targetGroupId);
+  const targetGroup = findGroupInSpace(space, targetGroupId);
 
   if (!sourceGroup || !targetGroup || sourceGroup.pinned || targetGroup.pinned) {
     state.draggedGroupId = "";
@@ -1040,7 +1096,7 @@ async function handleGroupDrop(spaceId, targetGroupId) {
 
   state.data = reorderGroups(state.data, spaceId, state.draggedGroupId, targetGroupId);
   state.draggedGroupId = "";
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -1063,7 +1119,7 @@ async function handleLinkGridDrop(spaceId, groupId) {
 
   state.data = moveLinkBetweenGroups(state.data, spaceId, state.draggedLink.groupId, groupId, state.draggedLink.linkId, "");
   state.draggedLink = null;
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -1090,14 +1146,14 @@ async function handleLinkDrop(groupId, targetLinkId) {
   if (state.draggedLink.groupId !== groupId) {
     state.data = moveLinkBetweenGroups(state.data, activeSpace.id, state.draggedLink.groupId, groupId, state.draggedLink.linkId, targetLinkId);
     state.draggedLink = null;
-    await saveData();
+    await persistWithDirty();
     root.MyTabDeskRender.renderAll();
     return;
   }
 
   state.data = reorderLinks(state.data, activeSpace.id, groupId, state.draggedLink.linkId, targetLinkId);
   state.draggedLink = null;
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -1115,7 +1171,7 @@ async function addDraggedTabToGroup(spaceId, groupId) {
 
   state.data = addLinksToGroup(state.data, spaceId, groupId, tabsToLinks([state.draggedTab]));
   state.draggedTab = null;
-  await saveData();
+  await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
 
@@ -1158,7 +1214,7 @@ async function handleExportEncryptedBackup() {
     URL.revokeObjectURL(link.href);
 
     state.data.settings.sync.lastBackupAt = getCurrentTime();
-    await saveData({ skipAutoSync: true });
+    await persistWithDirtySkipSync();
     root.MyTabDeskRender.renderSettingsStatus();
     await showAlert("加密备份已导出。");
   } catch (error) {
@@ -1238,7 +1294,7 @@ async function importEncryptedBackupFile(event) {
     state.data = importedData;
     state.data.settings.sync.lastImportAt = getCurrentTime();
     state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
-    await saveData({ skipAutoSync: true });
+    await persistWithDirtySkipSync();
     root.MyTabDeskRender.renderAll();
     await showAlert("加密备份已成功导入。");
   } catch (error) {
@@ -1246,6 +1302,45 @@ async function importEncryptedBackupFile(event) {
   }
 
   elements.encryptedBackupFileInput.value = "";
+}
+
+/**
+ * 从外部（右键菜单）添加单个链接到第一个可用分组。
+ *
+ * @param {Object} externalData - 外部数据，包含 url, title, favIconUrl
+ * @returns {Promise<void>} 添加完成后结束。
+ */
+async function addExternalLink(externalData) {
+  if (!externalData || !externalData.url) {
+    return;
+  }
+
+  /** 当前激活空间。 */
+  const activeSpace = getActiveSpace();
+
+  if (!activeSpace) {
+    return;
+  }
+
+  if (!Array.isArray(activeSpace.groups) || activeSpace.groups.length === 0) {
+    return;
+  }
+
+  /** 目标分组，默认为第一个分组。 */
+  const targetGroup = activeSpace.groups[0];
+
+  /** 链接数据。 */
+  const linkData = {
+    id: createId("link"),
+    title: externalData.title || externalData.url,
+    url: externalData.url,
+    favIconUrl: externalData.favIconUrl || "",
+    createdAt: getCurrentTime()
+  };
+
+  state.data = addLinksToGroup(state.data, activeSpace.id, targetGroup.id, [linkData]);
+  await persistWithDirty();
+  root.MyTabDeskRender.renderAll();
 }
 
 root.MyTabDeskActions = {
@@ -1291,6 +1386,7 @@ root.MyTabDeskActions = {
   handleLinkGridDrop,
   handleLinkDrop,
   addDraggedTabToGroup,
+  addExternalLink,
   openSettings,
   handleExportEncryptedBackup,
   requestImportEncryptedBackup,

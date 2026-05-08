@@ -21,11 +21,11 @@
           </div>
         </div>
         <div class="create-space-wrap">
-          <button id="createSpaceBtn" class="icon-button" type="button" aria-label="打开空间创建菜单">+</button>
+          <button id="createSpaceBtn" class="icon-button" type="button" aria-label="打开空间创建菜单">＋</button>
           <div id="createSpaceMenu" class="create-space-menu" hidden>
-            <button id="createBlankSpaceBtn" class="create-space-action" type="button"><span aria-hidden="true">➕</span>创建空间</button>
-            <button id="importSpaceBtn" class="create-space-action" type="button"><span aria-hidden="true">⬇️</span>导入空间</button>
-            <button id="importBookmarksBtn" class="create-space-action" type="button"><span aria-hidden="true">🔖</span>从浏览器书签导入</button>
+            <button id="createBlankSpaceBtn" class="create-space-action" type="button"><span aria-hidden="true">＋</span>创建空间</button>
+            <button id="importSpaceBtn" class="create-space-action" type="button"><span aria-hidden="true">⇩</span>导入空间</button>
+            <button id="importBookmarksBtn" class="create-space-action" type="button"><span aria-hidden="true">⧉</span>从浏览器书签导入</button>
           </div>
         </div>
       </header>
@@ -53,7 +53,7 @@
         <div class="main-actions">
           <label class="search-box" for="searchInput">
             <span aria-hidden="true">⌕</span>
-            <input id="searchInput" class="search-input" type="search" placeholder="搜索分组、标题或网址" autocomplete="off" />
+            <input id="searchInput" class="search-input" type="search" placeholder="搜索分组、标题或网址..." autocomplete="off" />
           </label>
           <button id="toggleThemeBtn" class="secondary-button" type="button">深色模式</button>
           <button id="toggleTabsPanelBtn" class="secondary-button" type="button">收起右栏</button>
@@ -73,7 +73,7 @@
       <section id="groupList" class="group-list" aria-live="polite"></section>
 
       <div id="emptyState" class="empty-state" hidden>
-        <div class="empty-illustration" aria-hidden="true">⌘</div>
+        <div class="empty-illustration" aria-hidden="true">◇</div>
         <h2>还没有保存任何链接</h2>
         <p>你可以从右侧当前窗口标签页栏保存当前窗口的网页。</p>
       </div>
@@ -88,21 +88,21 @@
 
         <div class="settings-summary-grid" aria-label="数据概览">
           <article class="settings-summary-card">
-            <span class="summary-icon summary-icon-space" aria-hidden="true">空</span>
+            <span class="summary-icon summary-icon-space" aria-hidden="true">◻</span>
             <div>
               <strong id="settingsSpaceCountValue">0</strong>
               <span>空间</span>
             </div>
           </article>
           <article class="settings-summary-card">
-            <span class="summary-icon summary-icon-group" aria-hidden="true">组</span>
+            <span class="summary-icon summary-icon-group" aria-hidden="true">▤</span>
             <div>
               <strong id="settingsGroupCountValue">0</strong>
               <span>分组</span>
             </div>
           </article>
           <article class="settings-summary-card">
-            <span class="summary-icon summary-icon-link" aria-hidden="true">签</span>
+            <span class="summary-icon summary-icon-link" aria-hidden="true">⌗</span>
             <div>
               <strong id="settingsLinkCountValue">0</strong>
               <span>标签</span>
@@ -111,11 +111,11 @@
         </div>
 
         <div class="settings-status-line" aria-label="同步状态">
-          <span>同步模式：<strong id="syncModeValue">手动同步基础版</strong></span>
-          <span>设备标识：<strong id="syncDeviceIdValue">-</strong></span>
-          <span>最近备份：<strong id="syncLastBackupValue">从未备份</strong></span>
-          <span>最近导入：<strong id="syncLastImportValue">从未导入</strong></span>
-          <span>自动同步：<strong id="syncAutoStatusValue">未启用</strong></span>
+          <span class="settings-status-item"><span class="settings-status-label">同步模式</span><strong id="syncModeValue">手动同步基础版</strong></span>
+          <span class="settings-status-item"><span class="settings-status-label">设备标识</span><strong id="syncDeviceIdValue">-</strong></span>
+          <span class="settings-status-item"><span class="settings-status-label">最近备份</span><strong id="syncLastBackupValue">从未备份</strong></span>
+          <span class="settings-status-item"><span class="settings-status-label">最近导入</span><strong id="syncLastImportValue">从未导入</strong></span>
+          <span class="settings-status-item"><span class="settings-status-label">自动同步</span><strong id="syncAutoStatusValue">未启用</strong></span>
         </div>
 
         <div class="settings-body">
@@ -352,6 +352,7 @@
   <script src="newtab-sync.js?v=20260430-modular"></script>
   <script src="newtab-actions.js?v=20260430-modular"></script>
   <script src="newtab-render.js?v=20260430-modular"></script>
-  <script src="newtab-main.js?v=20260430-modular"></script>
+  <script src="newtab-notifications.js?v=20260506-context-menu"></script>
+  <script src="newtab-main.js?v=20260506-context-menu"></script>
 </body>
 </html>

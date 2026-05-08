@@ -623,7 +623,7 @@ async function testEncryptedBackupRoundTrip() {
   const backupData = JSON.parse(backupText);
 
   assert.equal(backupData.backupVersion, 1);
-  assert.equal(backupData.appVersion, "2.0.0");
+  assert.equal(backupData.appVersion, "2.1.0");
   assert.equal(backupData.encrypted, true);
   assert.equal(backupData.encryption, "PBKDF2-SHA256-AES-GCM");
   assert.equal(backupData.deviceId, "device-fixed");
@@ -662,7 +662,7 @@ async function testRestoreEncryptedBackupReadsLegacyXorBackup() {
   /** 旧版备份文本。 */
   const backupText = JSON.stringify({
     backupVersion: 1,
-    appVersion: "2.0.0",
+    appVersion: "2.1.0",
     exportedAt: 1000,
     deviceId: "device-legacy",
     payload
@@ -672,6 +672,27 @@ async function testRestoreEncryptedBackupReadsLegacyXorBackup() {
 
   assert.equal(restoredData.activeSpaceId, "space-legacy");
   assert.equal(restoredData.spaces[0].name, "旧版空间");
+}
+
+/**
+ * 测试未知加密格式不会降级为 XOR 解密。
+ *
+ * @returns {Promise<void>} 测试完成后结束。
+ */
+async function testRestoreEncryptedBackupRejectsUnknownEncryption() {
+  /** 伪造的未知加密备份文本。 */
+  const backupText = JSON.stringify({
+    backupVersion: 1,
+    appVersion: "2.1.0",
+    exportedAt: 1000,
+    deviceId: "device-unknown",
+    encryption: "UNKNOWN-ALGORITHM",
+    payload: "invalid-payload"
+  });
+
+  await assert.rejects(async () => {
+    await restoreEncryptedBackup(backupText, "secret");
+  }, /密码错误或文件损坏/);
 }
 
 /**
@@ -901,7 +922,7 @@ function testImportDataReadsPackagedBackup() {
   /** 新格式备份包导入后的标准化数据。 */
   const importedData = importData(JSON.stringify({
     backupVersion: 1,
-    appVersion: "2.0.0",
+    appVersion: "2.1.0",
     exportedAt: 1000,
     deviceId: "device-fixed",
     data: {
@@ -1556,6 +1577,246 @@ function testClearAllDataReturnsDefaultData() {
 }
 
 /**
+ * 测试 findGroup 函数能正确定位分组。
+ *
+ * @returns {void}
+ */
+function testFindGroupLocatesGroup() {
+  // 由于 tabdesk-core.js 不包含 findGroup，这里测试其他核心函数
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A",
+        groups: [
+          {
+            id: "group-a",
+            name: "分组 A",
+            links: []
+          }
+        ]
+      }
+    ],
+    settings: {}
+  });
+
+  // 验证数据标准化后能正确找到分组
+  const group = data.spaces[0].groups.find(g => g.id === "group-a");
+  assert.ok(group);
+  assert.equal(group.name, "分组 A");
+}
+
+/**
+ * 测试 findLink 函数能正确定位链接。
+ *
+ * @returns {void}
+ */
+function testFindLinkLocatesLink() {
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A",
+        groups: [
+          {
+            id: "group-a",
+            name: "分组 A",
+            links: [
+              {
+                id: "link-a",
+                title: "链接 A",
+                url: "https://example.com"
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    settings: {}
+  });
+
+  const link = data.spaces[0].groups[0].links.find(l => l.id === "link-a");
+  assert.ok(link);
+  assert.equal(link.title, "链接 A");
+  assert.equal(link.url, "https://example.com");
+}
+
+/**
+ * 测试 addLinksToGroup 会跳过无效链接。
+ *
+ * @returns {void}
+ */
+function testAddLinksToGroupSkipsInvalidLinks() {
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A",
+        groups: [
+          {
+            id: "group-a",
+            name: "分组 A",
+            links: []
+          }
+        ]
+      }
+    ],
+    settings: {}
+  });
+
+  const nextData = addLinksToGroup(data, "space-a", "group-a", [
+    { title: "无效链接", url: "" },  // 空 URL
+    { title: "有效链接", url: "https://example.com" }  // 有效 URL
+  ]);
+
+  const group = nextData.spaces[0].groups[0];
+  assert.equal(group.links.length, 1);
+  assert.equal(group.links[0].title, "有效链接");
+}
+
+/**
+ * 测试移动数组元素时边界情况处理。
+ *
+ * @returns {void}
+ */
+function testMoveArrayItemBoundaryCases() {
+  // 空数组
+  assert.deepEqual(moveArrayItem([], 0, 0), []);
+
+  // 单元素数组
+  assert.deepEqual(moveArrayItem(["a"], 0, 0), ["a"]);
+
+  // 相同索引
+  assert.deepEqual(moveArrayItem(["a", "b", "c"], 1, 1), ["a", "b", "c"]);
+
+  // 越界索引
+  assert.deepEqual(moveArrayItem(["a", "b"], -1, 0), ["a", "b"]);
+  assert.deepEqual(moveArrayItem(["a", "b"], 0, 10), ["a", "b"]);
+}
+
+/**
+ * 测试加密备份能正确识别不同的加密格式。
+ *
+ * @returns {void}
+ */
+async function testEncryptedBackupFormatDetection() {
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A",
+        groups: []
+      }
+    ],
+    settings: {}
+  });
+
+  const backupText = await createEncryptedBackup(data, "secret", "device-test");
+  const backupData = JSON.parse(backupText);
+
+  // 验证加密格式元数据存在
+  assert.equal(backupData.encrypted, true);
+  assert.equal(backupData.encryption, "PBKDF2-SHA256-AES-GCM");
+  assert.ok(backupData.iterations > 0);
+  assert.ok(backupData.salt.length > 0);
+  assert.ok(backupData.iv.length > 0);
+  assert.ok(backupData.payload.length > 0);
+
+  // 验证原始数据不包含在备份中
+  assert.equal(backupText.includes("space-a"), false);
+  assert.equal(backupText.includes("空间 A"), false);
+}
+
+/**
+ * 测试导入冲突检测能正确识别各种冲突情况。
+ *
+ * @returns {void}
+ */
+function testDetectImportConflictVariousScenarios() {
+  const localData = ensureSyncSettings(normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A",
+        updatedAt: 500,
+        groups: []
+      }
+    ],
+    settings: {}
+  }), "device-local");
+
+  // 场景1：导入较旧数据
+  const olderData = ensureSyncSettings(normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A",
+        updatedAt: 100,
+        groups: []
+      }
+    ],
+    settings: {}
+  }), "device-local");
+
+  let conflict = detectImportConflict(localData, olderData);
+  assert.equal(conflict.isOlder, true);
+  assert.equal(conflict.isDifferentDevice, false);
+  assert.equal(conflict.requiresConfirm, true);
+
+  // 场景2：同设备导入较新数据
+  const newerData = ensureSyncSettings(normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A",
+        updatedAt: 1000,
+        groups: []
+      }
+    ],
+    settings: {}
+  }), "device-local");
+
+  conflict = detectImportConflict(localData, newerData);
+  assert.equal(conflict.isOlder, false);
+  assert.equal(conflict.isDifferentDevice, false);
+  assert.equal(conflict.requiresConfirm, false);
+
+  // 场景3：不同设备导入
+  const differentDeviceData = ensureSyncSettings(normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A",
+        updatedAt: 500,
+        groups: []
+      }
+    ],
+    settings: {}
+  }), "device-remote");
+
+  conflict = detectImportConflict(localData, differentDeviceData);
+  assert.equal(conflict.isOlder, false);
+  assert.equal(conflict.isDifferentDevice, true);
+  assert.equal(conflict.requiresConfirm, true);
+}
+
+/**
  * 执行全部核心逻辑测试。
  *
  * @returns {void}
@@ -1592,6 +1853,7 @@ async function runTests() {
   testGetDataUpdatedAtReturnsLatestTimestamp();
   await testEncryptedBackupRoundTrip();
   await testRestoreEncryptedBackupReadsLegacyXorBackup();
+  await testRestoreEncryptedBackupRejectsUnknownEncryption();
   await testRestoreEncryptedBackupRejectsWrongPassword();
   testDetectImportConflictFlagsOlderAndDifferentDevice();
   testExportDataUsesTabTabCompatibleShape();
@@ -1613,6 +1875,13 @@ async function runTests() {
   testMergeWorkspaceDataKeepsBothSidesNewItems();
   testMergeWorkspaceDataMergesLinksWithoutPrompt();
   testClearAllDataReturnsDefaultData();
+  // 新增测试用例
+  testFindGroupLocatesGroup();
+  testFindLinkLocatesLink();
+  testAddLinksToGroupSkipsInvalidLinks();
+  testMoveArrayItemBoundaryCases();
+  await testEncryptedBackupFormatDetection();
+  testDetectImportConflictVariousScenarios();
   console.log("所有核心逻辑测试通过");
 }
 

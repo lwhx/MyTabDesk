@@ -48,7 +48,7 @@ MyTabDesk 是一个浏览器新标签页工作台插件，用于替代浏览器�
 
 ### 2.2 第一版交付目标
 
-第一版不追求复杂功能，而是要实现一个稳定可用的三栏版 MVP。
+第一版不追求复杂功能，而是实现一个稳定可用的三栏 MVP。
 
 必须完成：
 
@@ -90,7 +90,7 @@ MyTabDesk 是一个浏览器新标签页工作台插件，用于替代浏览器�
 | P1 | MVP 应该具备，影响完整体验 | 搜索、删除确认、分组折叠、批量打开提示 |
 | P2 | 可以延后，不影响第一版核心闭环 | 导出入口、设置入口、当前标签搜索、单个标签保存到指定分组 |
 
-第一版交付时，必须优先保证 P0 功能稳定可用，再补齐 P1 功能。P2 功能可以先保留入口或规划说明，但不应阻塞 v1.0.0 发布。
+第一版交付时，应优先保证 P0 功能稳定可用，再补齐 P1 功能。P2 功能可以先保留入口或规划说明，不应阻塞第一版发布。
 
 ### 2.4 非功能需求
 
@@ -113,7 +113,7 @@ MyTabDesk 是一个浏览器新标签页工作台插件，用于替代浏览器�
 
 #### 可维护性要求
 
-1. `newtab.js` 中的数据读写、状态管理、渲染逻辑和事件绑定应尽量按职责拆分；
+1. `newtab-main.js`、`newtab-actions.js`、`newtab-render.js`、`newtab-sync.js`、`newtab-utils.js` 中的数据读写、状态管理、渲染逻辑和事件绑定应尽量按职责拆分；
 2. 所有读取自 `chrome.storage.local` 的数据都需要做结构校验和默认值兜底；
 3. 所有 Chrome API 调用都需要考虑失败或返回空数据的情况；
 4. 后续如果功能复杂，应优先拆分模块，再考虑迁移框架。
@@ -135,7 +135,7 @@ MyTabDesk 是一个浏览器新标签页工作台插件，用于替代浏览器�
 3. 点击单个链接时，在新标签页打开该链接；
 4. 点击打开整个分组时，批量创建新标签页；
 5. 当前窗口标签页只过滤浏览器内部页面，不主动过滤重复网页，去重在保存分组时处理；
-6. v1.0.0 可以使用浏览器原生 `prompt`、`confirm`、`alert` 降低实现成本，后续版本再替换为自定义弹窗。
+6. 第一版可以使用浏览器原生 `prompt`、`confirm`、`alert` 降低实现成本，后续版本再替换为自定义弹窗。
 
 ---
 
@@ -895,16 +895,26 @@ function normalizeData(rawData) {
 ## 9.1 MVP 文件结构
 
 ```text
-my-tab-desk/
+MyTabDesk/
+├── assets/
+├── tests/
+│   └── tabdesk-core.test.js
+├── background.js
+├── jsconfig.json
 ├── manifest.json
+├── newtab-app.js
+├── newtab-actions.js
+├── newtab-dialogs.js
+├── newtab-main.js
+├── newtab-notifications.js
+├── newtab-render.js
+├── newtab-sync.js
+├── newtab-utils.js
 ├── newtab.html
 ├── newtab.css
-├── newtab.js
-├── README.md
-└── assets/
-    ├── icon16.png
-    ├── icon48.png
-    └── icon128.png
+├── package.json
+├── tabdesk-core.js
+└── README.md
 ```
 
 ## 9.2 文件职责
@@ -942,20 +952,17 @@ my-tab-desk/
 7. 响应式布局；
 8. 空状态。
 
-### newtab.js
+### newtab-main.js
 
-核心业务逻辑，负责：
+页面初始化入口，负责：
 
-1. 初始化；
-2. 数据读取；
-3. 数据保存；
-4. 渲染空间；
-5. 渲染分组；
-6. 渲染链接；
-7. 渲染当前标签；
-8. 事件绑定；
-9. 搜索；
-10. 调用 Chrome API。
+1. 绑定元素；
+2. 加载数据；
+3. 保存兜底数据；
+4. 绑定事件；
+5. 首次渲染；
+6. 触发自动同步；
+7. 刷新当前标签页。
 
 ---
 
@@ -965,7 +972,7 @@ my-tab-desk/
 {
   "manifest_version": 3,
   "name": "MyTabDesk",
-  "version": "1.0.0",
+  "version": "2.1.0",
   "description": "A local-first new tab workspace for saving and restoring browser tabs.",
   "permissions": [
     "tabs",
@@ -1021,7 +1028,15 @@ my-tab-desk/
     </aside>
   </div>
 
-  <script src="newtab.js"></script>
+  <script src="tabdesk-core.js"></script>
+  <script src="newtab-app.js"></script>
+  <script src="newtab-utils.js"></script>
+  <script src="newtab-dialogs.js"></script>
+  <script src="newtab-sync.js"></script>
+  <script src="newtab-actions.js"></script>
+  <script src="newtab-render.js"></script>
+  <script src="newtab-notifications.js"></script>
+  <script src="newtab-main.js"></script>
 </body>
 </html>
 ```
@@ -1582,7 +1597,7 @@ function filterGroups(groups, keyword) {
 
 ### 15.5 操作反馈规范
 
-v1.0.0 可以使用浏览器原生弹窗降低实现成本，但需要统一提示内容。
+第一版可使用浏览器原生弹窗降低实现成本，但提示文案需保持统一。
 
 | 场景 | 提示文案 |
 |---|---|
@@ -1724,14 +1739,14 @@ MyTabDesk 不会上传、出售或共享用户数据。
 
 1. v1.1 增加导出 JSON；
 2. v1.2 增加导入 JSON；
-3. v2.0 增加可选同步；
+3. 第五版增加可选同步；
 4. 所有删除操作增加确认。
 
 ---
 
 ## 18. 版本规划
 
-### v1.0.0：三栏 MVP
+### 第一版：三栏 MVP
 
 功能：
 
@@ -1744,7 +1759,7 @@ MyTabDesk 不会上传、出售或共享用户数据。
 7. 搜索；
 8. 本地存储。
 
-### v1.1.0：数据备份
+### 第二版：数据备份
 
 功能：
 
@@ -1754,7 +1769,7 @@ MyTabDesk 不会上传、出售或共享用户数据。
 4. 数据结构校验；
 5. 备份文件版本号。
 
-### v1.2.0：体验增强
+### 第三版：体验增强
 
 功能：
 
@@ -1765,7 +1780,7 @@ MyTabDesk 不会上传、出售或共享用户数据。
 5. 空间排序；
 6. 批量删除。
 
-### v1.3.0：拖拽版
+### 第四版：拖拽版
 
 功能：
 
@@ -1774,7 +1789,7 @@ MyTabDesk 不会上传、出售或共享用户数据。
 3. 链接拖拽排序；
 4. 从右侧标签拖到中间分组保存。
 
-### v2.0.0：同步版
+### 第五版：同步版
 
 功能：
 
@@ -1879,15 +1894,15 @@ MyTabDesk 不会上传、出售或共享用户数据。
 | 基础插件 | `manifest.json` | 配置 Manifest V3、权限和新标签页覆盖 | P0 | 可以在 Chrome 中加载扩展，打开新标签页显示自定义页面 |
 | 页面骨架 | `newtab.html` | 搭建左中右三栏 DOM 结构 | P0 | 页面包含空间栏、分组内容区、当前窗口标签页栏 |
 | 三栏样式 | `newtab.css` | 实现 CSS Grid 布局、按钮、卡片和空状态 | P0 | 页面在常见宽度下不溢出，信息层级清晰 |
-| 数据基础 | `newtab.js` | 实现默认数据、读取数据、保存数据 | P0 | 首次打开自动创建默认空间，刷新后数据保留 |
-| 数据健壮性 | `newtab.js` | 实现数据校验、默认值兜底和版本迁移入口 | P0 | storage 数据缺失或损坏时页面不白屏 |
-| 空间管理 | `newtab.js` | 实现创建、切换、删除空间 | P0 | 空间操作后左侧和中间区域同步更新 |
-| 分组管理 | `newtab.js` | 实现创建、删除、折叠和打开分组 | P0/P1 | 分组状态可保存，打开空分组有提示 |
-| 链接管理 | `newtab.js` | 实现链接展示、打开和删除 | P0 | 链接可在新标签页打开，删除后持久化 |
-| 当前标签页 | `newtab.js` | 调用 `chrome.tabs.query` 读取当前窗口标签页 | P0 | 右侧正确展示标题、URL 和图标 |
-| 保存标签页 | `newtab.js` | 保存当前窗口标签页为新分组，并处理无效 URL 和重复 URL | P0 | 保存后中间出现新分组，同一分组内 URL 不重复 |
-| 搜索 | `newtab.js` | 按分组名、链接标题和 URL 搜索 | P1 | 输入关键词后只展示匹配结果，清空后恢复全部 |
-| 交互反馈 | `newtab.js` | 补齐确认、提示和错误处理 | P1 | 删除、保存失败、无结果等场景均有明确反馈 |
+| 数据基础 | `newtab-main.js`、`newtab-utils.js` | 实现默认数据、读取数据、保存数据 | P0 | 首次打开自动创建默认空间，刷新后数据保留 |
+| 数据健壮性 | `newtab-main.js`、`newtab-utils.js` | 实现数据校验、默认值兜底和版本迁移入口 | P0 | storage 数据缺失或损坏时页面不白屏 |
+| 空间管理 | `newtab-actions.js`、`newtab-render.js` | 实现创建、切换、删除空间 | P0 | 空间操作后左侧和中间区域同步更新 |
+| 分组管理 | `newtab-actions.js`、`newtab-render.js` | 实现创建、删除、折叠和打开分组 | P0/P1 | 分组状态可保存，打开空分组有提示 |
+| 链接管理 | `newtab-actions.js`、`newtab-render.js` | 实现链接展示、打开和删除 | P0 | 链接可在新标签页打开，删除后持久化 |
+| 当前标签页 | `newtab-sync.js`、`newtab-actions.js` | 调用 `chrome.tabs.query` 读取当前窗口标签页 | P0 | 右侧正确展示标题、URL 和图标 |
+| 保存标签页 | `newtab-actions.js`、`background.js` | 保存当前窗口标签页为新分组，并处理无效 URL 和重复 URL | P0 | 保存后中间出现新分组，同一分组内 URL 不重复 |
+| 搜索 | `newtab-actions.js`、`newtab-render.js` | 按分组名、链接标题和 URL 搜索 | P1 | 输入关键词后只展示匹配结果，清空后恢复全部 |
+| 交互反馈 | `newtab-dialogs.js`、`newtab-notifications.js` | 补齐确认、提示和错误处理 | P1 | 删除、保存失败、无结果等场景均有明确反馈 |
 | 文档 | `README.md` | 编写安装、使用和隐私说明 | P1 | 用户可按 README 完成本地安装和基础使用 |
 
 ---
@@ -1934,7 +1949,7 @@ MyTabDesk 是一个本地优先的浏览器新标签页工作台插件，用于�
 
 ## 21. 最终交付标准
 
-v1.0.0 完成时，项目应满足：
+当前版本完成时，项目应满足：
 
 1. 可以本地加载到 Chrome；
 2. 新标签页被替换；

@@ -12,6 +12,20 @@ const {
 } = app;
 
 /**
+ * 工作台数据脏标记，用于检测数据是否发生变化，避免全量序列化比较。
+ */
+let workspaceDirty = false;
+
+/**
+ * 标记工作台数据已变更，后续 hasWorkspaceDataChanged 调用时会返回 true。
+ *
+ * @returns {void}
+ */
+function markDirty() {
+  workspaceDirty = true;
+}
+
+/**
  * 获取空间显示图标，兼容旧版本保存的英文图标值。
  *
  * @param {string} iconValue 空间保存的图标值。
@@ -63,6 +77,48 @@ function getSyncSettings() {
 }
 
 /**
+ * 验证图标 URL 是否来自可信域名，防止潜在的 XSS 风险。
+ * 只允许 http/https 协议的 URL，且必须是图片格式。
+ *
+ * @param {string} url 图标 URL。
+ * @returns {boolean} URL 安全时返回 true。
+ */
+function isSafeFaviconUrl(url) {
+  if (!url || typeof url !== "string") {
+    return false;
+  }
+
+  const trimmedUrl = url.trim();
+
+  if (!trimmedUrl) {
+    return false;
+  }
+
+  try {
+    const parsed = new URL(trimmedUrl);
+
+    // 只允许 http 和 https 协议
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return false;
+    }
+
+    // 检查是否为图片路径（常见图片扩展名）
+    const path = parsed.pathname.toLowerCase();
+    const imageExtensions = [".png", ".ico", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".bmp"];
+    const hasImageExtension = imageExtensions.some((ext) => path.endsWith(ext));
+
+    // 如果路径没有图片扩展名，也允许 favicon 或 icon 相关的路径
+    const safePaths = ["/favicon", "/favicon.ico", "/apple-touch-icon", "/icon"];
+    const hasSafePath = safePaths.some((safe) => path.includes(safe));
+
+    return hasImageExtension || hasSafePath || parsed.hostname.includes("favicon");
+  } catch (error) {
+    // 无法解析的 URL 视为不安全
+    return false;
+  }
+}
+
+/**
  * 判断当前同步服务商是否启用自动上传。
  *
  * @param {object} sync 当前同步配置。
@@ -103,18 +159,18 @@ function createWorkspaceSnapshot() {
 
 /**
  * 判断本地工作台业务数据是否发生变化。
+ * 使用脏标记优化，避免每次都进行全量序列化比较。
  *
  * @returns {boolean} 数据发生变化时返回 true。
  */
 function hasWorkspaceDataChanged() {
-  /** 当前工作台业务数据快照。 */
-  const snapshot = createWorkspaceSnapshot();
-
-  if (snapshot === state.lastWorkspaceSnapshot) {
+  if (!workspaceDirty) {
     return false;
   }
 
-  state.lastWorkspaceSnapshot = snapshot;
+  // 消费脏标记并更新快照
+  workspaceDirty = false;
+  state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
   return true;
 }
 
@@ -278,14 +334,16 @@ function createTextElement(tagName, className, text) {
 
 /**
  * 创建站点图标元素，加载失败时自动回退为首字母图标。
+ * 验证图标 URL 是否安全，不安全的 URL 直接使用兜底图标。
  *
  * @param {string} src 图标地址。
  * @param {string} title 链接或标签标题。
  * @returns {HTMLElement} 图标或兜底图标元素。
  */
 function createFavicon(src, title) {
-  if (!src) {
-    /** 无图标地址时显示的兜底图标。 */
+  // 验证图标 URL 安全性，不安全则使用兜底图标
+  if (!src || !isSafeFaviconUrl(src)) {
+    /** 无图标地址或不安全时显示的兜底图标。 */
     const fallback = document.createElement("div");
     fallback.className = "fallback-icon";
     fallback.textContent = title ? title.slice(0, 1).toUpperCase() : "⌁";
@@ -324,6 +382,9 @@ root.MyTabDeskUtils = {
   getDataSummary,
   clearElement,
   createTextElement,
-  createFavicon
+  createFavicon,
+  getCurrentTime,
+  markDirty,
+  isSafeFaviconUrl
 };
 })(globalThis);
