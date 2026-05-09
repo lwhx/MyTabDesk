@@ -168,7 +168,7 @@
                 <header class="sync-provider-header">
                   <div>
                     <div class="sync-provider-title">GitHub Gist 同步 <span class="settings-badge">Beta</span></div>
-                    <p class="settings-row-desc">使用私有 Gist 保存同步文件，适合多设备手动同步。</p>
+                    <p class="settings-row-desc">使用私有 Gist 保存同步文件，适合多设备手动同步；Gist 暂不提供应用内历史恢复，请谨慎开启自动同步。</p>
                   </div>
                   <label class="settings-switch" for="gistSyncSwitch" aria-label="启用 GitHub Gist 同步">
                     <input id="gistSyncSwitch" type="checkbox" />
@@ -251,9 +251,19 @@
                     <span></span>
                   </label>
                 </div>
+                <div class="settings-row settings-row-stackable webdav-history-row">
+                  <div>
+                    <span class="settings-label">历史备份</span>
+                    <p class="settings-row-desc">WebDAV 上传前会按天归档旧云端数据，保留最近 60 份，恢复时可选择具体日期。</p>
+                  </div>
+                  <div class="settings-actions settings-actions-inline">
+                    <button id="webdavLoadHistoryBtn" class="secondary-button" type="button">查看历史备份</button>
+                  </div>
+                </div>
+                <div id="webdavHistoryList" class="webdav-history-list" aria-live="polite"></div>
               </article>
             </div>
-            <p class="settings-hint">同步配置仅保存在浏览器本地。请使用专用应用密码或最小权限 Token，不要把密码或 Token 写入代码仓库。</p>
+            <p class="settings-hint">同步配置仅保存在浏览器本地，WebDAV 密码和 Gist Token 会留在本机扩展存储中。请使用专用应用密码或最小权限 Token，不要在不可信设备使用，也不要把密码或 Token 写入代码仓库。</p>
           </section>
         </div>
       </section>

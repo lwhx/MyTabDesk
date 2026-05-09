@@ -242,6 +242,7 @@ function bindEvents() {
   safeAddEventListener(elements.gistDownloadSyncBtn, "click", () => root.MyTabDeskSync.downloadManualSync("gist"));
   safeAddEventListener(elements.webdavUploadSyncBtn, "click", () => root.MyTabDeskSync.uploadManualSync("webdav"));
   safeAddEventListener(elements.webdavDownloadSyncBtn, "click", () => root.MyTabDeskSync.downloadManualSync("webdav"));
+  safeAddEventListener(elements.webdavLoadHistoryBtn, "click", root.MyTabDeskSync.loadWebDavHistoryBackups);
   safeAddEventListener(elements.encryptedBackupFileInput, "change", root.MyTabDeskActions.importEncryptedBackupFile);
   safeAddEventListener(elements.searchInput, "input", (event) => {
     state.searchKeyword = event.target.value;
@@ -357,6 +358,8 @@ function bindElements() {
   elements.gistDownloadSyncBtn = getElement("gistDownloadSyncBtn");
   elements.webdavUploadSyncBtn = getElement("webdavUploadSyncBtn");
   elements.webdavDownloadSyncBtn = getElement("webdavDownloadSyncBtn");
+  elements.webdavLoadHistoryBtn = getElement("webdavLoadHistoryBtn");
+  elements.webdavHistoryList = getElement("webdavHistoryList");
   elements.syncModeValue = getElement("syncModeValue");
   elements.syncDeviceIdValue = getElement("syncDeviceIdValue");
   elements.syncLastModifiedValue = getElement("syncLastModifiedValue");

@@ -45,6 +45,21 @@ const DEFAULT_SYNC_SETTINGS = {
 const DEFAULT_WEBDAV_SYNC_FILENAME = "MyTabDesk.json";
 
 /**
+ * WebDAV 默认历史备份目录名，用于保存按天归档的云端同步文件。
+ */
+const DEFAULT_WEBDAV_HISTORY_DIRECTORY = "mytabdesk-history";
+
+/**
+ * WebDAV 历史备份默认保留数量。
+ */
+const DEFAULT_WEBDAV_HISTORY_LIMIT = 60;
+
+/**
+ * WebDAV 历史备份文件名前缀分隔符。
+ */
+const WEBDAV_HISTORY_FILENAME_MARK = "-backup-";
+
+/**
  * GitHub Gist 默认同步描述，用于自动发现 MyTabDesk 同步 Gist。
  */
 const DEFAULT_GIST_SYNC_DESCRIPTION = "MyTabDesk Sync";
@@ -149,6 +164,165 @@ function resolveSafeWebDavFileUrl(sync) {
   }
 
   return fileUrl;
+}
+
+/**
+ * 获取 WebDAV 同步文件名称。
+ *
+ * @param {string} fileUrl 已解析的 WebDAV 同步文件地址。
+ * @returns {string} WebDAV 同步文件名称。
+ */
+function getWebDavSyncFilename(fileUrl) {
+  /** WebDAV 文件 URL 对象。 */
+  const url = new URL(fileUrl);
+  /** URL 路径分段列表。 */
+  const segments = url.pathname.split("/").filter(Boolean);
+  /** 同步文件名。 */
+  const filename = decodeURIComponent(segments[segments.length - 1] || DEFAULT_WEBDAV_SYNC_FILENAME);
+
+  return filename || DEFAULT_WEBDAV_SYNC_FILENAME;
+}
+
+/**
+ * 获取 WebDAV 历史备份目录地址。
+ *
+ * @param {string} fileUrl 已解析的 WebDAV 同步文件地址。
+ * @returns {string} WebDAV 历史备份目录地址。
+ */
+function resolveWebDavHistoryDirectoryUrl(fileUrl) {
+  /** WebDAV 文件 URL 对象。 */
+  const url = new URL(fileUrl);
+  /** URL 路径分段列表。 */
+  const segments = url.pathname.split("/").filter(Boolean);
+
+  segments.pop();
+  segments.push(DEFAULT_WEBDAV_HISTORY_DIRECTORY);
+  url.pathname = `/${segments.map((segment) => encodeURIComponent(segment)).join("/")}/`;
+  url.search = "";
+  url.hash = "";
+
+  return url.toString();
+}
+
+/**
+ * 获取 WebDAV 历史备份文件地址。
+ *
+ * @param {string} fileUrl 已解析的 WebDAV 同步文件地址。
+ * @param {string} backupDate 历史备份日期，格式为 YYYY-MM-DD。
+ * @returns {string} WebDAV 历史备份文件地址。
+ */
+function resolveWebDavHistoryFileUrl(fileUrl, backupDate) {
+  /** 历史备份目录地址。 */
+  const directoryUrl = resolveWebDavHistoryDirectoryUrl(fileUrl);
+  /** WebDAV 同步文件名称。 */
+  const filename = getWebDavSyncFilename(fileUrl).replace(/\.json$/i, "");
+  /** 历史备份文件名。 */
+  const historyFilename = `${filename}${WEBDAV_HISTORY_FILENAME_MARK}${backupDate}.json`;
+
+  return `${directoryUrl}${encodeURIComponent(historyFilename)}`;
+}
+
+/**
+ * 获取 WebDAV 历史备份文件清单地址。
+ *
+ * @param {object} sync WebDAV 同步配置。
+ * @returns {string} WebDAV 历史备份文件清单地址。
+ */
+function resolveWebDavHistoryDirectoryFromSync(sync) {
+  return resolveWebDavHistoryDirectoryUrl(resolveSafeWebDavFileUrl(sync));
+}
+
+/**
+ * 获取指定日期的 WebDAV 历史备份文件地址。
+ *
+ * @param {object} sync WebDAV 同步配置。
+ * @param {string} backupDate 历史备份日期，格式为 YYYY-MM-DD。
+ * @returns {string} WebDAV 历史备份文件地址。
+ */
+function resolveWebDavHistoryFileFromSync(sync, backupDate) {
+  return resolveWebDavHistoryFileUrl(resolveSafeWebDavFileUrl(sync), backupDate);
+}
+
+/**
+ * 格式化 WebDAV 历史备份日期。
+ *
+ * @param {number} timestamp 需要格式化的时间戳。
+ * @returns {string} YYYY-MM-DD 格式的日期文本。
+ */
+function formatWebDavHistoryDate(timestamp) {
+  /** 日期对象。 */
+  const date = new Date(timestamp || getCurrentTime());
+  /** 年份文本。 */
+  const year = String(date.getFullYear()).padStart(4, "0");
+  /** 月份文本。 */
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  /** 日期文本。 */
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+/**
+ * 创建 WebDAV 按天历史备份包。
+ *
+ * @param {string} payload 云端旧同步文件文本。
+ * @param {object} options 历史备份选项。
+ * @param {string} options.backupDate 历史备份日期。
+ * @param {number} options.createdAt 历史备份创建时间戳。
+ * @param {string} options.sourceFilename 来源同步文件名。
+ * @returns {string} WebDAV 历史备份 JSON 文本。
+ */
+function createWebDavHistoryBackupPayload(payload, options) {
+  /** 备份包创建时间。 */
+  const createdAt = options.createdAt || getCurrentTime();
+  /** 备份日期。 */
+  const backupDate = options.backupDate || formatWebDavHistoryDate(createdAt);
+  /** 解析后的旧同步数据。 */
+  const data = importData(payload);
+
+  return JSON.stringify({
+    backupType: "webdav-daily-history",
+    backupDate,
+    createdAt,
+    sourceFilename: options.sourceFilename || DEFAULT_WEBDAV_SYNC_FILENAME,
+    data
+  }, null, 2);
+}
+
+/**
+ * 从 WebDAV 历史备份文件名中解析日期。
+ *
+ * @param {string} filename WebDAV 历史备份文件名。
+ * @returns {string} 解析得到的历史备份日期。
+ */
+function parseWebDavHistoryDateFromFilename(filename) {
+  /** 日期匹配结果。 */
+  const match = filename.match(/-backup-(\d{4}-\d{2}-\d{2})\.json$/i);
+
+  return match ? match[1] : "";
+}
+
+/**
+ * 规范化 WebDAV 历史备份条目。
+ *
+ * @param {object} entry 原始历史备份条目。
+ * @returns {object} 规范化后的历史备份条目。
+ */
+function normalizeWebDavHistoryEntry(entry) {
+  /** 历史备份文件名。 */
+  const filename = entry.filename || "";
+  /** 从文件名解析出的备份日期。 */
+  const backupDate = entry.backupDate || parseWebDavHistoryDateFromFilename(filename);
+  /** 历史备份创建时间。 */
+  const createdAt = Number(entry.createdAt || 0);
+
+  return {
+    filename,
+    url: entry.url || "",
+    backupDate,
+    createdAt,
+    createdAtText: createdAt > 0 ? new Date(createdAt).toLocaleString("zh-CN") : "未知时间"
+  };
 }
 
 /**
@@ -1722,6 +1896,8 @@ const tabdeskCoreApi = {
   APP_VERSION,
   BACKUP_VERSION,
   DEFAULT_WEBDAV_SYNC_FILENAME,
+  DEFAULT_WEBDAV_HISTORY_DIRECTORY,
+  DEFAULT_WEBDAV_HISTORY_LIMIT,
   DEFAULT_GIST_SYNC_DESCRIPTION,
   createDefaultData,
   normalizeData,
@@ -1731,6 +1907,15 @@ const tabdeskCoreApi = {
   getCurrentTime,
   resolveWebDavSyncUrl,
   resolveSafeWebDavFileUrl,
+  getWebDavSyncFilename,
+  resolveWebDavHistoryDirectoryUrl,
+  resolveWebDavHistoryFileUrl,
+  resolveWebDavHistoryDirectoryFromSync,
+  resolveWebDavHistoryFileFromSync,
+  formatWebDavHistoryDate,
+  createWebDavHistoryBackupPayload,
+  parseWebDavHistoryDateFromFilename,
+  normalizeWebDavHistoryEntry,
   createBasicAuthHeader,
   isSyncProviderEnabled,
   getEnabledSyncProviders,
