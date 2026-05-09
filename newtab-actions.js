@@ -962,6 +962,17 @@ async function toggleTheme() {
 }
 
 /**
+ * 切换标签卡片显示密度。
+ *
+ * @returns {Promise<void>} 切换并保存后结束。
+ */
+async function toggleViewDensity() {
+  state.data.settings.viewDensity = state.data.settings.viewDensity === "compact" ? "detailed" : "compact";
+  await persistWithDirty();
+  root.MyTabDeskRender.renderAll();
+}
+
+/**
  * 切换左侧空间栏折叠状态。
  *
  * @returns {Promise<void>} 切换并保存后结束。
@@ -1376,6 +1387,7 @@ root.MyTabDeskActions = {
   importSpaceFromText,
   clearData,
   toggleTheme,
+  toggleViewDensity,
   toggleSidebar,
   toggleTabsPanel,
   toggleBatchDelete,

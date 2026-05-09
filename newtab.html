@@ -5,6 +5,19 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MyTabDesk</title>
   <link rel="stylesheet" href="newtab.css" />
+  <script>
+    (function () {
+      try {
+        var savedTheme = window.localStorage.getItem("mytabdesk_theme_hint");
+        var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+        var theme = savedTheme === "dark" || savedTheme === "light" ? savedTheme : prefersDark ? "dark" : "light";
+        document.documentElement.dataset.theme = theme;
+        document.body && (document.body.dataset.theme = theme);
+      } catch (error) {
+        document.documentElement.dataset.theme = "light";
+      }
+    })();
+  </script>
 </head>
 <body>
   <input id="importFileInput" class="visually-hidden" type="file" accept="application/json,.json" />
@@ -56,6 +69,7 @@
             <input id="searchInput" class="search-input" type="search" placeholder="搜索分组、标题或网址..." autocomplete="off" />
           </label>
           <button id="toggleThemeBtn" class="secondary-button" type="button">深色模式</button>
+          <button id="toggleViewDensityBtn" class="secondary-button" type="button">简约模式</button>
           <button id="toggleTabsPanelBtn" class="secondary-button" type="button">收起右栏</button>
           <button id="batchDeleteBtn" class="secondary-button danger-text-button" type="button">批量删除</button>
           <button id="createGroupBtn" class="primary-button" type="button">添加分组</button>

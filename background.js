@@ -20,6 +20,21 @@ const CONTEXT_MENU_IDS = {
 const PENDING_SAVE_KEY = "mytabdesk_pending_save_data";
 
 /**
+ * 自动同步闹钟名称。
+ */
+const AUTO_SYNC_ALARM_NAME = "MyTabDeskAutoSync";
+
+/**
+ * 自动同步闹钟唤醒间隔，单位为分钟。
+ */
+const AUTO_SYNC_PERIOD_MINUTES = 30;
+
+/**
+ * 后台唤醒自动同步待处理标记键名。
+ */
+const AUTO_SYNC_WAKE_KEY = "mytabdesk_auto_sync_wake_pending";
+
+/**
  * 待保存的链接或页面信息，用于在后台和 MyTabDesk 主页面之间传递一次性保存数据。
  *
  * @type {object|null}
@@ -253,6 +268,61 @@ async function notifyMyTabDeskPage(eventType) {
 }
 
 /**
+ * 设置后台自动同步闹钟，避免 MV3 Service Worker 休眠导致定时任务丢失。
+ *
+ * @returns {void}
+ */
+function setupAutoSyncAlarm() {
+  chrome.alarms.clear(AUTO_SYNC_ALARM_NAME, () => {
+    chrome.alarms.create(AUTO_SYNC_ALARM_NAME, {
+      periodInMinutes: AUTO_SYNC_PERIOD_MINUTES
+    });
+  });
+}
+
+/**
+ * 通知已打开的 MyTabDesk 页面执行现有自动同步流程。
+ *
+ * @returns {Promise<void>} 通知完成后结束。
+ */
+async function notifyMyTabDeskAutoSync() {
+  /** 当前打开的 MyTabDesk 页面列表。 */
+  const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL("newtab.html") });
+
+  if (tabs.length === 0) {
+    await chrome.storage.local.set({
+      [AUTO_SYNC_WAKE_KEY]: Date.now()
+    });
+    return;
+  }
+
+  for (const tab of tabs) {
+    sendMessageToTab(tab.id, {
+      type: "run-auto-sync"
+    });
+  }
+}
+
+/**
+ * 消费后台自动同步待处理标记。
+ *
+ * @returns {Promise<number>} 待处理标记时间戳，不存在时返回 0。
+ */
+async function consumeAutoSyncWakeFlag() {
+  try {
+    /** 后台自动同步待处理读取结果。 */
+    const result = await chrome.storage.local.get(AUTO_SYNC_WAKE_KEY);
+    /** 后台自动同步待处理时间戳。 */
+    const pendingAt = Number(result[AUTO_SYNC_WAKE_KEY] || 0);
+    await chrome.storage.local.remove(AUTO_SYNC_WAKE_KEY);
+    return pendingAt;
+  } catch (error) {
+    console.error("读取自动同步待处理标记失败:", error);
+    return 0;
+  }
+}
+
+/**
  * 显示 Chrome 系统通知。
  *
  * @param {string} title 通知标题。
@@ -331,6 +401,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     sendResponse({ success: true });
     return true;
   }
+
+  if (message.type === "consume-auto-sync-wake") {
+    consumeAutoSyncWakeFlag().then((pendingAt) => {
+      sendResponse({ pendingAt });
+    });
+    return true;
+  }
 });
 
 /**
@@ -338,6 +415,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  */
 chrome.runtime.onInstalled.addListener((details) => {
   initializeContextMenus();
+  setupAutoSyncAlarm();
 
   if (details.reason === "install") {
     showNotification(
@@ -353,9 +431,24 @@ chrome.runtime.onInstalled.addListener((details) => {
  */
 chrome.runtime.onStartup.addListener(() => {
   initializeContextMenus();
+  setupAutoSyncAlarm();
 });
 
+setupAutoSyncAlarm();
 initializeContextMenus();
+
+/**
+ * 监听自动同步闹钟唤醒事件。
+ */
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== AUTO_SYNC_ALARM_NAME) {
+    return;
+  }
+
+  notifyMyTabDeskAutoSync().catch((error) => {
+    console.error("后台自动同步唤醒失败:", error);
+  });
+});
 
 /**
  * 监听插件图标点击事件，并在新标签页打开 MyTabDesk 主界面。

@@ -280,6 +280,7 @@ function createDefaultData() {
       theme: "light",
       rightPanelCollapsed: false,
       sidebarCollapsed: false,
+      viewDensity: "detailed",
       sync: {
         ...DEFAULT_SYNC_SETTINGS,
         deviceId: createDeviceId()
@@ -381,6 +382,7 @@ function normalizeData(rawData) {
       theme: getPathValue(rawData, "settings.theme", "light"),
       rightPanelCollapsed: getPathValue(rawData, "settings.rightPanelCollapsed", false),
       sidebarCollapsed: getPathValue(rawData, "settings.sidebarCollapsed", false),
+      viewDensity: getPathValue(rawData, "settings.viewDensity", "detailed") === "compact" ? "compact" : "detailed",
       sync: {
         deviceId: getPathValue(rawData, "settings.sync.deviceId", ""),
         deviceName: getPathValue(rawData, "settings.sync.deviceName", DEFAULT_SYNC_SETTINGS.deviceName),

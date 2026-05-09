@@ -10,6 +10,11 @@ const { getElement, loadData, saveData, createWorkspaceSnapshot, markDirty } = r
 const registeredEventListeners = [];
 
 /**
+ * 后台自动同步消息监听是否已绑定。
+ */
+let backgroundAutoSyncMessageBound = false;
+
+/**
  * 安全地注册事件监听器，自动记录以便后续清理。
  *
  * @param {HTMLElement} element DOM 元素。
@@ -36,6 +41,73 @@ function cleanupEventListeners() {
     }
   }
   registeredEventListeners.length = 0;
+}
+
+/**
+ * 判断当前环境是否支持扩展运行时消息 API。
+ *
+ * @returns {boolean} 支持运行时消息 API 时返回 true。
+ */
+function hasRuntimeMessaging() {
+  return typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage;
+}
+
+/**
+ * 执行后台唤醒的自动同步逻辑。
+ *
+ * @returns {Promise<void>} 自动同步流程完成后结束。
+ */
+async function runBackgroundAutoSync() {
+  await root.MyTabDeskSync.runAutoSyncNow();
+}
+
+/**
+ * 绑定后台自动同步消息监听。
+ *
+ * @returns {void}
+ */
+function bindBackgroundAutoSyncMessages() {
+  if (!hasRuntimeMessaging() || backgroundAutoSyncMessageBound) {
+    return;
+  }
+
+  backgroundAutoSyncMessageBound = true;
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+    if (!message || message.type !== "run-auto-sync") {
+      return false;
+    }
+
+    runBackgroundAutoSync().then(() => {
+      sendResponse({ success: true });
+    }).catch((error) => {
+      console.error("后台自动同步执行失败：", error);
+      sendResponse({ success: false, error: error.message || "后台自动同步执行失败" });
+    });
+
+    return true;
+  });
+}
+
+/**
+ * 消费后台自动同步唤醒标记。
+ *
+ * @returns {Promise<void>} 消费并执行完成后结束。
+ */
+async function consumeBackgroundAutoSyncWake() {
+  if (!hasRuntimeMessaging()) {
+    return;
+  }
+
+  try {
+    /** 后台自动同步唤醒标记响应。 */
+    const response = await chrome.runtime.sendMessage({ type: "consume-auto-sync-wake" });
+
+    if (response && response.pendingAt) {
+      await runBackgroundAutoSync();
+    }
+  } catch (error) {
+    console.error("消费后台自动同步唤醒标记失败：", error);
+  }
 }
 
 /**
@@ -144,6 +216,7 @@ function bindEvents() {
   safeAddEventListener(elements.saveCurrentTabsBtn, "click", root.MyTabDeskActions.saveCurrentTabsToGroup);
   safeAddEventListener(elements.importFileInput, "change", root.MyTabDeskActions.importSelectedFile);
   safeAddEventListener(elements.toggleThemeBtn, "click", root.MyTabDeskActions.toggleTheme);
+  safeAddEventListener(elements.toggleViewDensityBtn, "click", root.MyTabDeskActions.toggleViewDensity);
   safeAddEventListener(elements.toggleSidebarBtn, "click", root.MyTabDeskActions.toggleSidebar);
   safeAddEventListener(elements.toggleTabsPanelBtn, "click", root.MyTabDeskActions.toggleTabsPanel);
   safeAddEventListener(elements.batchDeleteBtn, "click", root.MyTabDeskActions.toggleBatchDelete);
@@ -252,6 +325,7 @@ function bindElements() {
   elements.currentSpaceMeta = getElement("currentSpaceMeta");
   elements.searchInput = getElement("searchInput");
   elements.toggleThemeBtn = getElement("toggleThemeBtn");
+  elements.toggleViewDensityBtn = getElement("toggleViewDensityBtn");
   elements.toggleTabsPanelBtn = getElement("toggleTabsPanelBtn");
   elements.batchDeleteBtn = getElement("batchDeleteBtn");
   elements.createGroupBtn = getElement("createGroupBtn");
@@ -313,8 +387,10 @@ async function init() {
   state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
   await saveData({ skipAutoSync: true });
   bindEvents();
+  bindBackgroundAutoSyncMessages();
   root.MyTabDeskRender.renderAll();
   root.MyTabDeskSync.scheduleAutoSync();
+  await consumeBackgroundAutoSyncWake();
   await root.MyTabDeskActions.refreshCurrentTabs();
 }
 
@@ -360,6 +436,8 @@ function destroy() {
 root.MyTabDeskMain = {
   bindEvents,
   bindElements,
+  bindBackgroundAutoSyncMessages,
+  consumeBackgroundAutoSyncWake,
   init,
   destroy,
   cleanupEventListeners

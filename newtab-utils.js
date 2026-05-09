@@ -344,16 +344,35 @@ function getChromeFaviconUrl(pageUrl) {
   }
 
   try {
+    /** 标准化后的页面 URL。 */
     const parsed = new URL(pageUrl.trim());
 
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return "";
     }
 
-    return `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(parsed.href)}&size=32`;
+    /** Chrome MV3 原生 favicon 入口地址。 */
+    const faviconUrl = new URL(chrome.runtime.getURL("/_favicon/"));
+    faviconUrl.searchParams.set("pageUrl", parsed.href);
+    faviconUrl.searchParams.set("size", "32");
+    return faviconUrl.toString();
   } catch (error) {
     return "";
   }
+}
+
+/**
+ * 创建站点图标兜底元素。
+ *
+ * @param {string} title 链接或标签标题。
+ * @returns {HTMLElement} 兜底图标元素。
+ */
+function createFallbackFavicon(title) {
+  /** 无图标地址或不安全时显示的兜底图标。 */
+  const fallback = document.createElement("div");
+  fallback.className = "fallback-icon";
+  fallback.textContent = title ? title.slice(0, 1).toUpperCase() : "⌁";
+  return fallback;
 }
 
 /**
@@ -366,26 +385,22 @@ function getChromeFaviconUrl(pageUrl) {
  * @returns {HTMLElement} 图标或兜底图标元素。
  */
 function createFavicon(src, title, pageUrl = "") {
+  /** 优先使用浏览器缓存中的原生 favicon，保留原始图标作为备用地址。 */
   const faviconUrl = getChromeFaviconUrl(pageUrl) || src;
 
   if (!faviconUrl || !isSafeFaviconUrl(faviconUrl)) {
-    /** 无图标地址或不安全时显示的兜底图标。 */
-    const fallback = document.createElement("div");
-    fallback.className = "fallback-icon";
-    fallback.textContent = title ? title.slice(0, 1).toUpperCase() : "⌁";
-    return fallback;
+    return createFallbackFavicon(title);
   }
 
   /** 站点图标图片元素。 */
   const image = document.createElement("img");
   image.className = "favicon";
+  image.loading = "lazy";
   image.src = faviconUrl;
   image.alt = "";
   image.referrerPolicy = "no-referrer";
   image.addEventListener("error", () => {
-    /** 图片加载失败时创建的兜底图标。 */
-    const fallback = createFavicon("", title, "");
-    image.replaceWith(fallback);
+    image.replaceWith(createFallbackFavicon(title));
   });
   return image;
 }
