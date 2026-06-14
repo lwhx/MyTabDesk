@@ -469,6 +469,55 @@ function openEditLinkDialog(groupId, linkId) {
 }
 
 /**
+ * 强制刷新单个链接图标。仅更新内存中的刷新时间戳，不持久化到 storage。
+ *
+ * @param {string} groupId 链接所属分组 ID。
+ * @param {string} linkId 链接 ID。
+ * @returns {void}
+ */
+function refreshLinkIcon(groupId, linkId) {
+  /** 当前激活空间。 */
+  const activeSpace = getActiveSpace();
+  /** 链接所属分组。 */
+  const group = findGroupInSpace(activeSpace, groupId);
+  /** 待刷新链接。 */
+  const link = findLinkInGroup(group, linkId);
+
+  if (!activeSpace || !group || !link) {
+    return;
+  }
+
+  state.faviconRefreshAt[linkId] = Date.now();
+  state.openLinkMenuId = "";
+  root.MyTabDeskRender.renderGroups();
+}
+
+/**
+ * 强制刷新指定分组内全部链接图标。仅更新内存中的刷新时间戳，不持久化到 storage。
+ *
+ * @param {string} groupId 分组 ID。
+ * @returns {void}
+ */
+function refreshGroupIcons(groupId) {
+  /** 当前激活空间。 */
+  const activeSpace = getActiveSpace();
+  /** 待刷新图标的分组。 */
+  const group = findGroupInSpace(activeSpace, groupId);
+
+  if (!activeSpace || !group || !Array.isArray(group.links)) {
+    return;
+  }
+
+  const refreshAt = Date.now();
+  for (const link of group.links) {
+    if (link && link.id) {
+      state.faviconRefreshAt[link.id] = refreshAt;
+    }
+  }
+  root.MyTabDeskRender.renderGroups();
+}
+
+/**
  * 关闭编辑链接弹窗。
  *
  * @returns {void}
@@ -1393,6 +1442,8 @@ root.MyTabDeskActions = {
   moveGroupToSpace,
   renameGroup,
   openEditLinkDialog,
+  refreshLinkIcon,
+  refreshGroupIcons,
   closeEditLinkDialog,
   submitEditLinkDialog,
   deleteLink,

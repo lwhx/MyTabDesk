@@ -74,6 +74,8 @@ const state = {
   openSpaceMenuId: "",
   /** 正在显示菜单的链接 ID。 */
   openLinkMenuId: "",
+  /** 链接图标强制刷新时间戳映射，仅保存在内存中，不参与持久化。 */
+  faviconRefreshAt: {},
   /** 正在编辑的链接上下文。 */
   editingLinkContext: null,
   /** 当前通用弹窗关闭后的回调函数。 */

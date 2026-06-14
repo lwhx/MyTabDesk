@@ -424,7 +424,88 @@ function extractDomain(url) {
 }
 
 /**
- * 创建站点图标元素，优先使用 Chrome 原生图标能力，加载失败时自动回退为首字母图标。
+ * 构造 Cravatar favicon 服务地址（国内部署，速度快且稳定，由文派开源社区维护）。
+ * 作为 Chrome 原生 _favicon/ 接口失败时的二级兜底，适合中国网络环境。
+ *
+ * @param {string} pageUrl 页面地址。
+ * @returns {string} Cravicon favicon 地址，无法解析时返回空字符串。
+ */
+function getCravatarFaviconUrl(pageUrl) {
+  if (!pageUrl || typeof pageUrl !== "string") {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(pageUrl.trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return "";
+    }
+    return `https://cn.cravatar.com/favicon/api/index.php?url=${encodeURIComponent(parsed.hostname)}&size=32`;
+  } catch (error) {
+    return "";
+  }
+}
+
+/**
+ * 构造 Google 公开 favicon 服务地址，作为 Chrome 原生 _favicon/ 接口失败时的二级兜底。
+ * Google s2 服务覆盖几乎所有公开网站，且免费稳定。
+ *
+ * @param {string} pageUrl 页面地址。
+ * @returns {string} Google favicon 地址，无法解析时返回空字符串。
+ */
+function getGoogleFaviconUrl(pageUrl) {
+  if (!pageUrl || typeof pageUrl !== "string") {
+    return "";
+  }
+
+  try {
+    const parsed = new URL(pageUrl.trim());
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return "";
+    }
+    return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(parsed.hostname)}&sz=32`;
+  } catch (error) {
+    return "";
+  }
+}
+
+/**
+ * 根据输入文本生成稳定的颜色值，用于兜底图标背景，让不同站点的失败图标在视觉上可区分。
+ * 同一域名始终得到同一颜色。
+ *
+ * @param {string} text 用于生成颜色的文本（通常是域名或标题）。
+ * @returns {string} hsl 颜色字符串（如 "hsl(210, 65%, 55%)"）。
+ */
+function pickFallbackColor(text) {
+  /** 用于散列的种子，空文本给一个固定值避免全是同色。 */
+  const seed = text && text.length > 0 ? text : "default";
+  let hash = 0;
+  for (let i = 0; i < seed.length; i++) {
+    hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+  }
+  const hue = hash % 360;
+  return `hsl(${hue}, 65%, 55%)`;
+}
+
+/**
+ * 创建彩色兜底图标元素，显示域名前几个字符，背景色根据域名稳定生成。
+ *
+ * @param {string} text 用于确定背景色和显示文字的文本（优先域名，回退标题）。
+ * @returns {HTMLElement} 兜底图标 div。
+ */
+function createFallbackIcon(text) {
+  const fallback = document.createElement("div");
+  fallback.className = "fallback-icon";
+  const label = text ? text.slice(0, 2).toUpperCase() : "⌁";
+  fallback.textContent = label;
+  fallback.style.background = pickFallbackColor(text || label);
+  fallback.style.color = "#fff";
+  return fallback;
+}
+
+/**
+ * 创建站点图标元素，优先使用 Chrome 原生图标能力，加载失败时依次降级到
+ * Google 公开 favicon 服务、最后是彩色域名方块兜底。
  * 验证图标 URL 是否安全，不安全的 URL 直接使用兜底图标。
  *
  * @param {string} src 图标地址。
@@ -432,28 +513,47 @@ function extractDomain(url) {
  * @param {string} pageUrl 页面地址。
  * @returns {HTMLElement} 图标或兜底图标元素。
  */
-function createFavicon(src, title, pageUrl = "") {
-  const faviconUrl = getChromeFaviconUrl(pageUrl) || src;
+function createFavicon(src, title, pageUrl = "", refreshToken = 0) {
+  /** 优先用于兜底图标显示与配色的文本，优先用域名（更稳定可区分）。 */
+  const label = extractDomain(pageUrl) || (title ? title.trim() : "") || "";
 
-  if (!faviconUrl || !isSafeFaviconUrl(faviconUrl)) {
-    /** 无图标地址或不安全时显示的兜底图标。 */
-    const fallback = document.createElement("div");
-    fallback.className = "fallback-icon";
-    fallback.textContent = title ? title.slice(0, 1).toUpperCase() : "⌁";
-    return fallback;
+  /** 候选图标地址，按优先级排列：Chrome 原生 → 原始 src → Cravatar（国内）→ Google（海外）。 */
+  let candidates = [
+    getChromeFaviconUrl(pageUrl),
+    src,
+    getCravatarFaviconUrl(pageUrl),
+    getGoogleFaviconUrl(pageUrl)
+  ].filter((url) => url && isSafeFaviconUrl(url));
+
+  if (refreshToken) {
+    candidates = candidates.map((url) => `${url}${url.includes("?") ? "&" : "?"}t=${encodeURIComponent(refreshToken)}`);
+  }
+
+  if (candidates.length === 0) {
+    return createFallbackIcon(label);
   }
 
   /** 站点图标图片元素。 */
   const image = document.createElement("img");
   image.className = "favicon";
-  image.src = faviconUrl;
   image.alt = "";
   image.referrerPolicy = "no-referrer";
+
+  /** 当前尝试到的候选地址索引。 */
+  let tryIndex = 0;
+  image.src = candidates[0];
+
   image.addEventListener("error", () => {
-    /** 图片加载失败时创建的兜底图标。 */
-    const fallback = createFavicon("", title, "");
-    image.replaceWith(fallback);
+    tryIndex += 1;
+    if (tryIndex < candidates.length) {
+      // 还有候选地址，继续尝试下一个
+      image.src = candidates[tryIndex];
+    } else {
+      // 所有图标源都失败，回退到彩色域名方块
+      image.replaceWith(createFallbackIcon(label));
+    }
   });
+
   return image;
 }
 

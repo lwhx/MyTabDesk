@@ -464,7 +464,7 @@ function createGroupFaviconPreview(group) {
   const max = 5;
   const links = group.links.slice(0, max);
   for (const link of links) {
-    preview.appendChild(createFavicon(link.favIconUrl, link.title || link.url, link.url));
+    preview.appendChild(createFavicon(link.favIconUrl, link.title || link.url, link.url, state.faviconRefreshAt[link.id] || 0));
   }
   // 超过最大展示数量时用 +N 提示剩余链接
   if (group.links.length > max) {
@@ -545,6 +545,16 @@ function createGroupElement(group, activeSpace) {
     event.stopPropagation();
     root.MyTabDeskActions.openGroup(group.id);
   });
+  /** 刷新分组图标按钮。 */
+  const refreshIconsButton = document.createElement("button");
+  refreshIconsButton.type = "button";
+  refreshIconsButton.className = "secondary-button group-action-button";
+  refreshIconsButton.textContent = "刷新图标";
+  refreshIconsButton.setAttribute("aria-label", `刷新分组 ${group.name} 的全部图标`);
+  refreshIconsButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    root.MyTabDeskActions.refreshGroupIcons(group.id);
+  });
   /** 移动分组区域。 */
   const moveWrap = document.createElement("div");
   moveWrap.className = "group-move-wrap";
@@ -574,7 +584,7 @@ function createGroupElement(group, activeSpace) {
   deleteButton.textContent = "删除";
   deleteButton.addEventListener("click", () => root.MyTabDeskActions.deleteGroup(group.id));
 
-  actions.append(openAllButton, moveWrap, pinButton, deleteButton);
+  actions.append(openAllButton, refreshIconsButton, moveWrap, pinButton, deleteButton);
   // 折叠态下在分组名右侧展示前几个链接的 favicon 概览，让用户一眼看到组内内容
   const faviconPreview = createGroupFaviconPreview(group);
   header.append(headerInfo, faviconPreview, actions);
@@ -858,7 +868,7 @@ function createLinkElement(groupId, link) {
 
     root.MyTabDeskActions.openLink(link.url);
   });
-  contentButton.append(createFavicon(link.favIconUrl, link.title || link.url, link.url), content);
+  contentButton.append(createFavicon(link.favIconUrl, link.title || link.url, link.url, state.faviconRefreshAt[link.id] || 0), content);
 
   /** 链接更多操作按钮。 */
   const moreButton = document.createElement("button");
@@ -948,6 +958,17 @@ function createLinkActionMenuElement(groupId, link) {
     root.MyTabDeskActions.openEditLinkDialog(groupId, link.id);
   });
 
+  /** 刷新图标按钮。 */
+  const refreshIconButton = document.createElement("button");
+  refreshIconButton.type = "button";
+  refreshIconButton.className = "link-menu-action";
+  refreshIconButton.textContent = "刷新图标";
+  refreshIconButton.setAttribute("role", "menuitem");
+  refreshIconButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    root.MyTabDeskActions.refreshLinkIcon(groupId, link.id);
+  });
+
   /** 删除链接按钮。 */
   const deleteButton = document.createElement("button");
   deleteButton.type = "button";
@@ -964,7 +985,7 @@ function createLinkActionMenuElement(groupId, link) {
     }
   });
 
-  menu.append(editButton, deleteButton);
+  menu.append(editButton, refreshIconButton, deleteButton);
   return menu;
 }
 

@@ -1438,10 +1438,10 @@ body[data-theme="dark"] .space-icon {
   display: grid;
   place-items: center;
   border: 1px solid rgba(219, 227, 239, 0.75);
-  color: var(--color-primary);
-  font-size: 12px;
-  font-weight: 850;
-  background: var(--color-primary-soft);
+  /* 背景色和文字色由 createFallbackIcon 通过 inline style 注入，保证每个站点有稳定且可区分的颜色 */
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
 }
 
 .link-content,
