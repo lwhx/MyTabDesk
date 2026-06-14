@@ -14,7 +14,8 @@ const {
   createTextElement,
   createFavicon,
   hasChromeTabs,
-  getCurrentTime
+  getCurrentTime,
+  extractDomain
 } = root.MyTabDeskUtils;
 
 /**
@@ -78,21 +79,11 @@ function batchRender(renderFn) {
 function applyLayoutSettings() {
   /** 当前用户界面设置。 */
   const settings = state.data.settings;
-  const theme = settings.theme === "dark" ? "dark" : "light";
-  document.documentElement.dataset.theme = theme;
-  document.body.dataset.theme = theme;
-  try {
-    window.localStorage.setItem("mytabdesk_theme_hint", theme);
-  } catch (error) {
-    // 忽略主题提示缓存失败，主数据仍以 chrome.storage 为准。
-  }
+  document.body.dataset.theme = settings.theme === "dark" ? "dark" : "light";
   elements.appShell.classList.toggle("sidebar-collapsed", Boolean(settings.sidebarCollapsed));
   elements.appShell.classList.toggle("tabs-panel-collapsed", Boolean(settings.rightPanelCollapsed));
   elements.appShell.classList.toggle("settings-mode", state.viewMode === "settings");
-  elements.appShell.classList.toggle("compact-links", settings.viewDensity === "compact");
   elements.toggleThemeBtn.textContent = settings.theme === "dark" ? "浅色模式" : "深色模式";
-  elements.toggleViewDensityBtn.textContent = settings.viewDensity === "compact" ? "详细模式" : "简约模式";
-  elements.toggleViewDensityBtn.setAttribute("aria-pressed", settings.viewDensity === "compact" ? "true" : "false");
   elements.toggleSidebarBtn.textContent = settings.sidebarCollapsed ? "展开" : "收起";
   elements.toggleTabsPanelBtn.textContent = settings.rightPanelCollapsed ? "展开右栏" : "收起右栏";
   elements.batchBar.hidden = !state.batchDeleteEnabled;
@@ -149,9 +140,6 @@ function renderAll() {
  */
 function renderSpaces() {
   clearElement(elements.spaceList);
-
-  /** 空间列表批量渲染碎片。 */
-  const fragment = document.createDocumentFragment();
 
   for (const space of state.data.spaces) {
     const itemWrap = document.createElement("div");
@@ -243,10 +231,8 @@ function renderSpaces() {
       itemWrap.appendChild(createSpaceMenuElement(space));
     }
 
-    fragment.appendChild(itemWrap);
+    elements.spaceList.appendChild(itemWrap);
   }
-
-  elements.spaceList.appendChild(fragment);
 }
 
 /**
@@ -432,14 +418,9 @@ function renderGroups() {
 
   hideEmptyState();
 
-  /** 分组列表批量渲染碎片。 */
-  const fragment = document.createDocumentFragment();
-
   for (const group of visibleGroups) {
-    fragment.appendChild(createGroupElement(group, activeSpace));
+    elements.groupList.appendChild(createGroupElement(group, activeSpace));
   }
-
-  elements.groupList.appendChild(fragment);
 }
 
 /**
@@ -465,6 +446,34 @@ function hideEmptyState() {
 }
 
 /**
+ * 创建分组折叠态下的 favicon 概览容器。
+ * 折叠且有链接时，在分组名右侧展示前几个链接的站点图标横排，方便快速识别组内内容。
+ *
+ * @param {object} group 分组数据。
+ * @returns {HTMLElement} favicon 概览容器，无需展示时带 hidden 属性。
+ */
+function createGroupFaviconPreview(group) {
+  const preview = document.createElement("div");
+  preview.className = "group-favicon-preview";
+  const hasLinks = Array.isArray(group.links) && group.links.length > 0;
+  preview.hidden = !group.collapsed || !hasLinks;
+  if (preview.hidden) {
+    return preview;
+  }
+
+  const max = 5;
+  const links = group.links.slice(0, max);
+  for (const link of links) {
+    preview.appendChild(createFavicon(link.favIconUrl, link.title || link.url, link.url));
+  }
+  // 超过最大展示数量时用 +N 提示剩余链接
+  if (group.links.length > max) {
+    preview.appendChild(createTextElement("span", "favicon-more", `+${group.links.length - max}`));
+  }
+  return preview;
+}
+
+/**
  * 创建单个分组容器。
  *
  * @param {object} group 分组数据。
@@ -476,7 +485,7 @@ function createGroupElement(group, activeSpace) {
   const groupElement = document.createElement("section");
   groupElement.className = "group-section";
   groupElement.dataset.groupId = group.id;
-  groupElement.draggable = !group.pinned && state.editingGroupId !== group.id;
+  groupElement.draggable = !group.pinned;
 
   if (group.pinned) {
     groupElement.classList.add("pinned");
@@ -566,7 +575,9 @@ function createGroupElement(group, activeSpace) {
   deleteButton.addEventListener("click", () => root.MyTabDeskActions.deleteGroup(group.id));
 
   actions.append(openAllButton, moveWrap, pinButton, deleteButton);
-  header.append(headerInfo, actions);
+  // 折叠态下在分组名右侧展示前几个链接的 favicon 概览，让用户一眼看到组内内容
+  const faviconPreview = createGroupFaviconPreview(group);
+  header.append(headerInfo, faviconPreview, actions);
   groupElement.appendChild(header);
 
   if (state.movingGroupId === group.id) {
@@ -578,14 +589,8 @@ function createGroupElement(group, activeSpace) {
     const linkGrid = document.createElement("div");
     linkGrid.className = "link-grid";
 
-    if (!group.pinned && state.editingGroupId !== group.id) {
+    if (!group.pinned) {
       groupElement.addEventListener("dragstart", (event) => {
-        if (event.target.closest(".group-name-input")) {
-          event.preventDefault();
-          event.stopPropagation();
-          return;
-        }
-
         state.draggedGroupId = group.id;
         event.dataTransfer.setData("text/plain", group.id);
       });
@@ -658,21 +663,9 @@ function createGroupNameElement(group) {
     input.type = "text";
     input.value = group.name;
     input.maxLength = 64;
-    input.size = Math.min(Math.max(group.name.length + 1, 4), 32);
-    input.draggable = false;
     input.setAttribute("aria-label", `编辑分组 ${group.name} 的名称`);
 
     input.addEventListener("click", (event) => event.stopPropagation());
-    input.addEventListener("pointerdown", (event) => event.stopPropagation());
-    input.addEventListener("mousedown", (event) => event.stopPropagation());
-    input.addEventListener("mousemove", (event) => event.stopPropagation());
-    input.addEventListener("dragstart", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-    });
-    input.addEventListener("input", () => {
-      input.size = Math.min(Math.max(input.value.length + 1, 4), 32);
-    });
     input.addEventListener("keydown", async (event) => {
       if (event.key === "Enter") {
         event.preventDefault();
@@ -847,7 +840,7 @@ function createLinkElement(groupId, link) {
   const content = document.createElement("div");
   content.className = "link-content";
   content.append(createTextElement("div", "link-title", link.title || link.url));
-  content.append(createTextElement("div", "link-url", link.url));
+  content.append(createTextElement("div", "link-url", extractDomain(link.url)));
 
   /** 链接主内容按钮。 */
   const contentButton = document.createElement("button");
@@ -1004,9 +997,6 @@ function renderCurrentTabs() {
     return;
   }
 
-  /** 当前标签页列表批量渲染碎片。 */
-  const fragment = document.createDocumentFragment();
-
   for (const tab of visibleTabs) {
     /** 当前标签页按钮。 */
     const item = document.createElement("button");
@@ -1021,17 +1011,30 @@ function renderCurrentTabs() {
     content.append(createTextElement("div", "tab-title", tab.title));
     content.append(createTextElement("div", "tab-url", tab.url));
 
-    item.append(createFavicon(tab.favIconUrl, tab.title || tab.url, tab.url), content);
+    /** 单个当前标签保存按钮。 */
+    const saveButton = document.createElement("button");
+    saveButton.type = "button";
+    saveButton.className = "tab-save-button";
+    saveButton.textContent = "保存";
+    saveButton.setAttribute("aria-label", `保存标签 ${tab.title || tab.url}`);
+    saveButton.addEventListener("click", async (event) => {
+      event.stopPropagation();
+      try {
+        await root.MyTabDeskActions.saveSingleTabToGroup(tab);
+      } catch (error) {
+        console.error("保存标签失败：", error);
+      }
+    });
+
+    item.append(createFavicon(tab.favIconUrl, tab.title || tab.url, tab.url), content, saveButton);
     item.addEventListener("click", () => root.MyTabDeskActions.activateTab(tab.tabId));
     item.addEventListener("dragstart", (event) => {
       event.stopPropagation();
       state.draggedTab = tab;
       event.dataTransfer.setData("text/plain", tab.url);
     });
-    fragment.appendChild(item);
+    elements.currentTabsList.appendChild(item);
   }
-
-  elements.currentTabsList.appendChild(fragment);
 }
 
 /**

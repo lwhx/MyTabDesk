@@ -9,13 +9,6 @@ const {
   createId,
   getCurrentTime,
   resolveSafeWebDavFileUrl,
-  getWebDavSyncFilename,
-  resolveWebDavHistoryDirectoryUrl,
-  resolveWebDavHistoryFileUrl,
-  formatWebDavHistoryDate,
-  createWebDavHistoryBackupPayload,
-  normalizeWebDavHistoryEntry,
-  DEFAULT_WEBDAV_HISTORY_LIMIT,
   createBasicAuthHeader,
   isSyncProviderEnabled,
   getEnabledSyncProviders,
@@ -75,8 +68,6 @@ const state = {
   draggedTab: null,
   /** 自动同步防抖定时器 ID。 */
   autoSyncTimerId: 0,
-  /** 是否正在执行自动同步。 */
-  autoSyncRunning: false,
   /** 最近一次已保存的工作台数据快照。 */
   lastWorkspaceSnapshot: "",
   /** 正在显示菜单的空间 ID。 */
@@ -195,13 +186,6 @@ root.MyTabDeskPage = {
   createId,
   getCurrentTime,
   resolveSafeWebDavFileUrl,
-  getWebDavSyncFilename,
-  resolveWebDavHistoryDirectoryUrl,
-  resolveWebDavHistoryFileUrl,
-  formatWebDavHistoryDate,
-  createWebDavHistoryBackupPayload,
-  normalizeWebDavHistoryEntry,
-  DEFAULT_WEBDAV_HISTORY_LIMIT,
   createBasicAuthHeader,
   isSyncProviderEnabled,
   getEnabledSyncProviders,

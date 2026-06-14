@@ -23,14 +23,6 @@ const {
   getCurrentTime,
   resolveWebDavSyncUrl,
   resolveSafeWebDavFileUrl,
-  getWebDavSyncFilename,
-  resolveWebDavHistoryDirectoryUrl,
-  resolveWebDavHistoryFileUrl,
-  formatWebDavHistoryDate,
-  createWebDavHistoryBackupPayload,
-  parseWebDavHistoryDateFromFilename,
-  normalizeWebDavHistoryEntry,
-  DEFAULT_WEBDAV_HISTORY_LIMIT,
   createBasicAuthHeader,
   isSyncProviderEnabled,
   getEnabledSyncProviders,
@@ -370,78 +362,6 @@ function testResolveSafeWebDavFileUrlReturnsResolvedHttpsUrl() {
   });
 
   assert.equal(fileUrl, "https://example.com/dav/folder/Backup.json");
-}
-
-/**
- * 测试 WebDAV 历史备份地址会基于同步文件目录生成。
- *
- * @returns {void}
- */
-function testResolveWebDavHistoryUrlsUseSyncFileDirectory() {
-  /** WebDAV 同步文件地址。 */
-  const fileUrl = "https://example.com/dav/folder/MyTabDesk.json";
-
-  assert.equal(getWebDavSyncFilename(fileUrl), "MyTabDesk.json");
-  assert.equal(resolveWebDavHistoryDirectoryUrl(fileUrl), "https://example.com/dav/folder/mytabdesk-history/");
-  assert.equal(resolveWebDavHistoryFileUrl(fileUrl, "2026-05-09"), "https://example.com/dav/folder/mytabdesk-history/MyTabDesk-backup-2026-05-09.json");
-}
-
-/**
- * 测试 WebDAV 历史备份日期会按本地日期格式化。
- *
- * @returns {void}
- */
-function testFormatWebDavHistoryDate() {
-  /** 固定日期时间戳。 */
-  const timestamp = new Date(2026, 4, 9, 10, 30, 0).getTime();
-
-  assert.equal(formatWebDavHistoryDate(timestamp), "2026-05-09");
-}
-
-/**
- * 测试 WebDAV 历史备份包会保存添加时间和业务数据。
- *
- * @returns {void}
- */
-function testCreateWebDavHistoryBackupPayloadStoresMetadata() {
-  /** 默认工作台数据。 */
-  const data = createDefaultData();
-  /** 普通同步备份文本。 */
-  const payload = exportData(data);
-  /** 历史备份文本。 */
-  const historyPayload = createWebDavHistoryBackupPayload(payload, {
-    backupDate: "2026-05-09",
-    createdAt: 1778300000000,
-    sourceFilename: "MyTabDesk.json"
-  });
-  /** 历史备份对象。 */
-  const history = JSON.parse(historyPayload);
-
-  assert.equal(history.backupType, "webdav-daily-history");
-  assert.equal(history.backupDate, "2026-05-09");
-  assert.equal(history.createdAt, 1778300000000);
-  assert.equal(history.sourceFilename, "MyTabDesk.json");
-  assert.equal(history.data.spaces.length, 1);
-}
-
-/**
- * 测试 WebDAV 历史备份条目会从文件名解析日期。
- *
- * @returns {void}
- */
-function testNormalizeWebDavHistoryEntryParsesDate() {
-  /** 规范化后的历史备份条目。 */
-  const entry = normalizeWebDavHistoryEntry({
-    filename: "MyTabDesk-backup-2026-05-09.json",
-    url: "https://example.com/dav/folder/mytabdesk-history/MyTabDesk-backup-2026-05-09.json",
-    createdAt: 1778300000000
-  });
-
-  assert.equal(DEFAULT_WEBDAV_HISTORY_LIMIT, 60);
-  assert.equal(parseWebDavHistoryDateFromFilename(entry.filename), "2026-05-09");
-  assert.equal(entry.backupDate, "2026-05-09");
-  assert.equal(entry.createdAt, 1778300000000);
-  assert.equal(typeof entry.createdAtText, "string");
 }
 
 /**
@@ -882,6 +802,30 @@ function testExportDataUsesTabTabCompatibleShape() {
   assert.equal(exportedPackage.spaces["space-a"].groups[0].tabs[0].favIconUrl, "https://example.com/favicon.ico");
   assert.equal(exportedPackage.spaces["space-a"].groups[0].tabs[0].pinned, false);
   assert.deepEqual(exportedPackage.spaces["space-a"].pins, {});
+}
+
+function testExportDataRemovesSyncSecrets() {
+  const exportedText = exportData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "Space A",
+        groups: []
+      }
+    ],
+    settings: {
+      sync: {
+        provider: "both",
+        webdavPassword: "secret-webdav",
+        gistToken: "secret-gist"
+      }
+    }
+  });
+
+  assert.equal(exportedText.includes("secret-webdav"), false);
+  assert.equal(exportedText.includes("secret-gist"), false);
 }
 
 /**
@@ -1920,10 +1864,6 @@ async function runTests() {
   testResolveSafeWebDavFileUrlRejectsMissingConfig();
   testResolveSafeWebDavFileUrlRejectsInsecureUrl();
   testResolveSafeWebDavFileUrlReturnsResolvedHttpsUrl();
-  testResolveWebDavHistoryUrlsUseSyncFileDirectory();
-  testFormatWebDavHistoryDate();
-  testCreateWebDavHistoryBackupPayloadStoresMetadata();
-  testNormalizeWebDavHistoryEntryParsesDate();
   testCreateBasicAuthHeaderUsesUtf8Credentials();
   testIsSyncProviderEnabledSupportsBothProviders();
   testIsSyncProviderEnabledIgnoresAutoSyncOnly();
@@ -1941,6 +1881,7 @@ async function runTests() {
   await testRestoreEncryptedBackupRejectsWrongPassword();
   testDetectImportConflictFlagsOlderAndDifferentDevice();
   testExportDataUsesTabTabCompatibleShape();
+  testExportDataRemovesSyncSecrets();
   testCreateBackupSafeDataRemovesSecrets();
   testExportImportRoundTripPreservesGroupsAndLinks();
   testImportDataRejectsInvalidText();

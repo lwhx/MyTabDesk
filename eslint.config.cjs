@@ -3,7 +3,7 @@ const globals = require("globals");
 
 module.exports = [
   {
-    ignores: ["node_modules/**", ".claude/**"]
+    ignores: ["node_modules/**"]
   },
   js.configs.recommended,
   {
@@ -26,7 +26,7 @@ module.exports = [
     }
   },
   {
-    files: ["tabdesk-core.js", "tests/**/*.js"],
+    files: ["tabdesk-core.js", "core/**/*.js", "tests/**/*.js"],
     languageOptions: {
       globals: {
         ...globals.node

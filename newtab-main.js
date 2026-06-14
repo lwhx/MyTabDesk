@@ -1,18 +1,13 @@
 (function (root) {
 const app = root.MyTabDeskPage;
 const { state, elements } = app;
-const { getElement, loadData, saveData, createWorkspaceSnapshot, markDirty } = root.MyTabDeskUtils;
+const { getElement, loadData, saveData, createWorkspaceSnapshot, markDirty, debounce } = root.MyTabDeskUtils;
 
 /**
  * 已注册的事件监听器列表，用于页面销毁时统一清理。
  * @type {Array<{element: HTMLElement, event: string, handler: Function}>}
  */
 const registeredEventListeners = [];
-
-/**
- * 后台自动同步消息监听是否已绑定。
- */
-let backgroundAutoSyncMessageBound = false;
 
 /**
  * 安全地注册事件监听器，自动记录以便后续清理。
@@ -41,73 +36,6 @@ function cleanupEventListeners() {
     }
   }
   registeredEventListeners.length = 0;
-}
-
-/**
- * 判断当前环境是否支持扩展运行时消息 API。
- *
- * @returns {boolean} 支持运行时消息 API 时返回 true。
- */
-function hasRuntimeMessaging() {
-  return typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.onMessage;
-}
-
-/**
- * 执行后台唤醒的自动同步逻辑。
- *
- * @returns {Promise<void>} 自动同步流程完成后结束。
- */
-async function runBackgroundAutoSync() {
-  await root.MyTabDeskSync.runAutoSyncNow();
-}
-
-/**
- * 绑定后台自动同步消息监听。
- *
- * @returns {void}
- */
-function bindBackgroundAutoSyncMessages() {
-  if (!hasRuntimeMessaging() || backgroundAutoSyncMessageBound) {
-    return;
-  }
-
-  backgroundAutoSyncMessageBound = true;
-  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (!message || message.type !== "run-auto-sync") {
-      return false;
-    }
-
-    runBackgroundAutoSync().then(() => {
-      sendResponse({ success: true });
-    }).catch((error) => {
-      console.error("后台自动同步执行失败：", error);
-      sendResponse({ success: false, error: error.message || "后台自动同步执行失败" });
-    });
-
-    return true;
-  });
-}
-
-/**
- * 消费后台自动同步唤醒标记。
- *
- * @returns {Promise<void>} 消费并执行完成后结束。
- */
-async function consumeBackgroundAutoSyncWake() {
-  if (!hasRuntimeMessaging()) {
-    return;
-  }
-
-  try {
-    /** 后台自动同步唤醒标记响应。 */
-    const response = await chrome.runtime.sendMessage({ type: "consume-auto-sync-wake" });
-
-    if (response && response.pendingAt) {
-      await runBackgroundAutoSync();
-    }
-  } catch (error) {
-    console.error("消费后台自动同步唤醒标记失败：", error);
-  }
 }
 
 /**
@@ -216,7 +144,6 @@ function bindEvents() {
   safeAddEventListener(elements.saveCurrentTabsBtn, "click", root.MyTabDeskActions.saveCurrentTabsToGroup);
   safeAddEventListener(elements.importFileInput, "change", root.MyTabDeskActions.importSelectedFile);
   safeAddEventListener(elements.toggleThemeBtn, "click", root.MyTabDeskActions.toggleTheme);
-  safeAddEventListener(elements.toggleViewDensityBtn, "click", root.MyTabDeskActions.toggleViewDensity);
   safeAddEventListener(elements.toggleSidebarBtn, "click", root.MyTabDeskActions.toggleSidebar);
   safeAddEventListener(elements.toggleTabsPanelBtn, "click", root.MyTabDeskActions.toggleTabsPanel);
   safeAddEventListener(elements.batchDeleteBtn, "click", root.MyTabDeskActions.toggleBatchDelete);
@@ -242,16 +169,15 @@ function bindEvents() {
   safeAddEventListener(elements.gistDownloadSyncBtn, "click", () => root.MyTabDeskSync.downloadManualSync("gist"));
   safeAddEventListener(elements.webdavUploadSyncBtn, "click", () => root.MyTabDeskSync.uploadManualSync("webdav"));
   safeAddEventListener(elements.webdavDownloadSyncBtn, "click", () => root.MyTabDeskSync.downloadManualSync("webdav"));
-  safeAddEventListener(elements.webdavLoadHistoryBtn, "click", root.MyTabDeskSync.loadWebDavHistoryBackups);
   safeAddEventListener(elements.encryptedBackupFileInput, "change", root.MyTabDeskActions.importEncryptedBackupFile);
-  safeAddEventListener(elements.searchInput, "input", (event) => {
+  safeAddEventListener(elements.searchInput, "input", debounce((event) => {
     state.searchKeyword = event.target.value;
     root.MyTabDeskRender.renderGroups();
-  });
-  safeAddEventListener(elements.tabSearchInput, "input", (event) => {
+  }, 200));
+  safeAddEventListener(elements.tabSearchInput, "input", debounce((event) => {
     state.tabSearchKeyword = event.target.value;
     root.MyTabDeskRender.renderCurrentTabs();
-  });
+  }, 200));
   safeAddEventListener(document, "dragend", () => {
     state.draggedSpaceId = "";
     state.draggedGroupId = "";
@@ -275,6 +201,27 @@ function bindEvents() {
 
     if (!event.target.closest(".group-move-wrap") && state.movingGroupId) {
       root.MyTabDeskActions.closeMoveGroupMenu();
+    }
+  });
+
+  // Ctrl/Cmd+K 聚焦中栏搜索框，方便高频检索
+  safeAddEventListener(document, "keydown", (event) => {
+    if (!(event.ctrlKey || event.metaKey) || event.key.toLowerCase() !== "k") {
+      return;
+    }
+    // 对话框打开时不抢焦点，避免干扰正在进行的输入
+    if (state.appDialogResolver || !elements.editLinkDialog.hidden) {
+      return;
+    }
+    event.preventDefault();
+    // 设置页下先切回工作台视图，再聚焦（搜索框在 workspaceToolbar 内，settings 下被隐藏）
+    if (state.viewMode === "settings") {
+      state.viewMode = "workspace";
+      root.MyTabDeskRender.renderAll();
+      requestAnimationFrame(() => elements.searchInput.focus());
+    } else {
+      elements.searchInput.focus();
+      elements.searchInput.select();
     }
   });
 }
@@ -326,7 +273,6 @@ function bindElements() {
   elements.currentSpaceMeta = getElement("currentSpaceMeta");
   elements.searchInput = getElement("searchInput");
   elements.toggleThemeBtn = getElement("toggleThemeBtn");
-  elements.toggleViewDensityBtn = getElement("toggleViewDensityBtn");
   elements.toggleTabsPanelBtn = getElement("toggleTabsPanelBtn");
   elements.batchDeleteBtn = getElement("batchDeleteBtn");
   elements.createGroupBtn = getElement("createGroupBtn");
@@ -358,8 +304,6 @@ function bindElements() {
   elements.gistDownloadSyncBtn = getElement("gistDownloadSyncBtn");
   elements.webdavUploadSyncBtn = getElement("webdavUploadSyncBtn");
   elements.webdavDownloadSyncBtn = getElement("webdavDownloadSyncBtn");
-  elements.webdavLoadHistoryBtn = getElement("webdavLoadHistoryBtn");
-  elements.webdavHistoryList = getElement("webdavHistoryList");
   elements.syncModeValue = getElement("syncModeValue");
   elements.syncDeviceIdValue = getElement("syncDeviceIdValue");
   elements.syncLastModifiedValue = getElement("syncLastModifiedValue");
@@ -390,10 +334,8 @@ async function init() {
   state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
   await saveData({ skipAutoSync: true });
   bindEvents();
-  bindBackgroundAutoSyncMessages();
   root.MyTabDeskRender.renderAll();
   root.MyTabDeskSync.scheduleAutoSync();
-  await consumeBackgroundAutoSyncWake();
   await root.MyTabDeskActions.refreshCurrentTabs();
 }
 
@@ -423,7 +365,6 @@ function destroy() {
   state.draggedGroupId = "";
   state.draggedLink = null;
   state.draggedTab = null;
-  state.autoSyncRunning = false;
   state.lastWorkspaceSnapshot = "";
   state.openSpaceMenuId = "";
   state.openLinkMenuId = "";
@@ -439,8 +380,6 @@ function destroy() {
 root.MyTabDeskMain = {
   bindEvents,
   bindElements,
-  bindBackgroundAutoSyncMessages,
-  consumeBackgroundAutoSyncWake,
   init,
   destroy,
   cleanupEventListeners

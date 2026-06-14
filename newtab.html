@@ -5,19 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>MyTabDesk</title>
   <link rel="stylesheet" href="newtab.css" />
-  <script>
-    (function () {
-      try {
-        var savedTheme = window.localStorage.getItem("mytabdesk_theme_hint");
-        var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
-        var theme = savedTheme === "dark" || savedTheme === "light" ? savedTheme : prefersDark ? "dark" : "light";
-        document.documentElement.dataset.theme = theme;
-        document.body && (document.body.dataset.theme = theme);
-      } catch (error) {
-        document.documentElement.dataset.theme = "light";
-      }
-    })();
-  </script>
 </head>
 <body>
   <input id="importFileInput" class="visually-hidden" type="file" accept="application/json,.json" />
@@ -34,11 +21,11 @@
           </div>
         </div>
         <div class="create-space-wrap">
-          <button id="createSpaceBtn" class="icon-button" type="button" aria-label="打开空间创建菜单" aria-haspopup="menu" aria-expanded="false">＋</button>
+          <button id="createSpaceBtn" class="icon-button" type="button" aria-label="打开空间创建菜单" aria-haspopup="menu" aria-expanded="false">+</button>
           <div id="createSpaceMenu" class="create-space-menu" hidden>
-            <button id="createBlankSpaceBtn" class="create-space-action" type="button"><span aria-hidden="true">＋</span>创建空间</button>
-            <button id="importSpaceBtn" class="create-space-action" type="button"><span aria-hidden="true">⇩</span>导入空间</button>
-            <button id="importBookmarksBtn" class="create-space-action" type="button"><span aria-hidden="true">⧉</span>从浏览器书签导入</button>
+            <button id="createBlankSpaceBtn" class="create-space-action" type="button"><span aria-hidden="true">+</span>创建空间</button>
+            <button id="importSpaceBtn" class="create-space-action" type="button"><span aria-hidden="true">⇪</span>导入空间</button>
+            <button id="importBookmarksBtn" class="create-space-action" type="button"><span aria-hidden="true">☆</span>从浏览器书签导入</button>
           </div>
         </div>
       </header>
@@ -69,7 +56,6 @@
             <input id="searchInput" class="search-input" type="search" placeholder="搜索分组、标题或网址..." autocomplete="off" />
           </label>
           <button id="toggleThemeBtn" class="secondary-button" type="button">深色模式</button>
-          <button id="toggleViewDensityBtn" class="secondary-button" type="button">简约模式</button>
           <button id="toggleTabsPanelBtn" class="secondary-button" type="button">收起右栏</button>
           <button id="batchDeleteBtn" class="secondary-button danger-text-button" type="button">批量删除</button>
           <button id="createGroupBtn" class="primary-button" type="button">添加分组</button>
@@ -87,7 +73,7 @@
       <section id="groupList" class="group-list" aria-live="polite"></section>
 
       <div id="emptyState" class="empty-state" hidden>
-        <div class="empty-illustration" aria-hidden="true">◇</div>
+        <div class="empty-illustration" aria-hidden="true">□</div>
         <h2>还没有保存任何链接</h2>
         <p>你可以从右侧当前窗口标签页栏保存当前窗口的网页。</p>
       </div>
@@ -102,21 +88,21 @@
 
         <div class="settings-summary-grid" aria-label="数据概览">
           <article class="settings-summary-card">
-            <span class="summary-icon summary-icon-space" aria-hidden="true">◻</span>
+            <span class="summary-icon summary-icon-space" aria-hidden="true">□</span>
             <div>
               <strong id="settingsSpaceCountValue">0</strong>
               <span>空间</span>
             </div>
           </article>
           <article class="settings-summary-card">
-            <span class="summary-icon summary-icon-group" aria-hidden="true">▤</span>
+            <span class="summary-icon summary-icon-group" aria-hidden="true">▣</span>
             <div>
               <strong id="settingsGroupCountValue">0</strong>
               <span>分组</span>
             </div>
           </article>
           <article class="settings-summary-card">
-            <span class="summary-icon summary-icon-link" aria-hidden="true">⌗</span>
+            <span class="summary-icon summary-icon-link" aria-hidden="true">⌁</span>
             <div>
               <strong id="settingsLinkCountValue">0</strong>
               <span>标签</span>
@@ -139,7 +125,7 @@
               <div class="settings-row settings-row-stackable">
                 <div>
                   <span class="settings-label">普通数据备份</span>
-                  <p class="settings-row-desc">导出或导入标准 JSON 数据文件，适合本地迁移和手动备份。</p>
+                  <p class="settings-row-desc">导出或导入标准 JSON 数据文件，适合本地迁移和手动备份。普通导出不会包含 WebDAV 密码或 GitHub Token。</p>
                 </div>
                 <div class="settings-actions settings-actions-inline">
                   <button id="offlineExportBtn" class="primary-button" type="button">导出数据</button>
@@ -168,7 +154,7 @@
                 <header class="sync-provider-header">
                   <div>
                     <div class="sync-provider-title">GitHub Gist 同步 <span class="settings-badge">Beta</span></div>
-                    <p class="settings-row-desc">使用私有 Gist 保存同步文件，适合多设备手动同步；Gist 暂不提供应用内历史恢复，请谨慎开启自动同步。</p>
+                    <p class="settings-row-desc">使用私有 Gist 保存同步文件，适合多设备手动同步。</p>
                   </div>
                   <label class="settings-switch" for="gistSyncSwitch" aria-label="启用 GitHub Gist 同步">
                     <input id="gistSyncSwitch" type="checkbox" />
@@ -251,19 +237,9 @@
                     <span></span>
                   </label>
                 </div>
-                <div class="settings-row settings-row-stackable webdav-history-row">
-                  <div>
-                    <span class="settings-label">历史备份</span>
-                    <p class="settings-row-desc">WebDAV 上传前会按天归档旧云端数据，保留最近 60 份，恢复时可选择具体日期。</p>
-                  </div>
-                  <div class="settings-actions settings-actions-inline">
-                    <button id="webdavLoadHistoryBtn" class="secondary-button" type="button">查看历史备份</button>
-                  </div>
-                </div>
-                <div id="webdavHistoryList" class="webdav-history-list" aria-live="polite"></div>
               </article>
             </div>
-            <p class="settings-hint">同步配置仅保存在浏览器本地，WebDAV 密码和 Gist Token 会留在本机扩展存储中。请使用专用应用密码或最小权限 Token，不要在不可信设备使用，也不要把密码或 Token 写入代码仓库。</p>
+            <p class="settings-hint">同步配置仅保存在浏览器本地。请使用专用应用密码或最小权限 Token，不要把密码或 Token 写入代码仓库。</p>
           </section>
         </div>
       </section>
@@ -369,7 +345,17 @@
     </section>
   </div>
 
-  <script src="tabdesk-core.js?v=20260429-dialog-menu"></script>
+  <script src="core/constants.js?v=20260614-core-split"></script>
+  <script src="core/ids.js?v=20260614-core-split"></script>
+  <script src="core/normalize.js?v=20260614-core-split"></script>
+  <script src="core/tabs.js?v=20260614-core-split"></script>
+  <script src="core/sync-settings.js?v=20260614-core-split"></script>
+  <script src="core/tabtab.js?v=20260614-core-split"></script>
+  <script src="core/io.js?v=20260614-core-split"></script>
+  <script src="core/reorder.js?v=20260614-core-split"></script>
+  <script src="core/merge.js?v=20260614-core-split"></script>
+  <script src="core/crypto.js?v=20260614-core-split"></script>
+  <script src="tabdesk-core.js?v=20260614-core-split"></script>
   <script src="newtab-app.js?v=20260430-modular"></script>
   <script src="newtab-utils.js?v=20260430-modular"></script>
   <script src="newtab-dialogs.js?v=20260430-modular"></script>

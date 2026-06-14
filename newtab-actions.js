@@ -63,7 +63,36 @@ async function persistWithDirty(options) {
  */
 async function persistWithDirtySkipSync(options) {
   markDirty();
-  await saveData({ ...options, skipAutoSync: true });
+  await saveData({ ...(options || {}), skipAutoSync: true });
+}
+
+function createDefaultInboxGroup() {
+  const now = getCurrentTime();
+
+  return {
+    id: createId("group"),
+    name: "收集箱",
+    collapsed: false,
+    pinned: false,
+    links: [],
+    createdAt: now,
+    updatedAt: now
+  };
+}
+
+function ensureActiveSpaceHasGroup(activeSpace) {
+  if (!activeSpace || !Array.isArray(activeSpace.groups)) {
+    return null;
+  }
+
+  if (activeSpace.groups.length > 0) {
+    return activeSpace.groups[0];
+  }
+
+  const group = createDefaultInboxGroup();
+  activeSpace.groups.push(group);
+  activeSpace.updatedAt = getCurrentTime();
+  return group;
 }
 
 /**
@@ -632,6 +661,8 @@ async function saveCurrentTabsToGroup() {
     return;
   }
 
+  ensureActiveSpaceHasGroup(activeSpace);
+
   if (!Array.isArray(activeSpace.groups) || activeSpace.groups.length === 0) {
     await showAlert("请先创建一个分组，再保存当前窗口标签。", "无法保存");
     return;
@@ -675,6 +706,8 @@ async function saveSingleTabToGroup(tab) {
   if (!activeSpace) {
     return;
   }
+
+  ensureActiveSpaceHasGroup(activeSpace);
 
   if (!Array.isArray(activeSpace.groups) || activeSpace.groups.length === 0) {
     await showAlert("请先创建一个分组，再保存当前标签。", "无法保存");
@@ -957,17 +990,6 @@ async function clearData() {
  */
 async function toggleTheme() {
   state.data.settings.theme = state.data.settings.theme === "dark" ? "light" : "dark";
-  await persistWithDirty();
-  root.MyTabDeskRender.renderAll();
-}
-
-/**
- * 切换标签卡片显示密度。
- *
- * @returns {Promise<void>} 切换并保存后结束。
- */
-async function toggleViewDensity() {
-  state.data.settings.viewDensity = state.data.settings.viewDensity === "compact" ? "detailed" : "compact";
   await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
@@ -1333,6 +1355,8 @@ async function addExternalLink(externalData) {
     return;
   }
 
+  ensureActiveSpaceHasGroup(activeSpace);
+
   if (!Array.isArray(activeSpace.groups) || activeSpace.groups.length === 0) {
     return;
   }
@@ -1387,7 +1411,6 @@ root.MyTabDeskActions = {
   importSpaceFromText,
   clearData,
   toggleTheme,
-  toggleViewDensity,
   toggleSidebar,
   toggleTabsPanel,
   toggleBatchDelete,

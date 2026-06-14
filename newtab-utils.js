@@ -17,12 +17,61 @@ const {
 let workspaceDirty = false;
 
 /**
+ * 同步操作串行锁的 promise 链尾节点。
+ * 所有同步入口（自动同步、手动上传/下载、同步配置保存）通过 withSyncLock 排队执行，
+ * 避免并发修改 state.data 或并发写入远端导致数据损坏。
+ */
+let syncLockChain = Promise.resolve();
+
+/**
  * 标记工作台数据已变更，后续 hasWorkspaceDataChanged 调用时会返回 true。
  *
  * @returns {void}
  */
 function markDirty() {
   workspaceDirty = true;
+}
+
+/**
+ * 串行执行同步类操作，保证同一时刻只有一个同步任务运行，后续调用自动排队。
+ * 单个任务的失败不会阻塞后续排队任务（通过 .catch 续接链条实现）。
+ *
+ * @param {Function} fn 需要加锁执行的异步函数。
+ * @returns {Promise<*>} fn 的返回值（透传）。
+ */
+function withSyncLock(fn) {
+  /** 当前任务执行完毕（无论成功或失败）后的锁链尾节点，用于续接下一个排队任务。 */
+  const nextChain = syncLockChain.then(fn, fn);
+  // 即使 fn 抛错也必须续接链条，否则后续排队任务永远挂起
+  syncLockChain = nextChain.then(
+    () => undefined,
+    () => undefined
+  );
+  return nextChain;
+}
+
+/**
+ * 创建防抖函数，在停止调用 delay 毫秒后才真正执行，期间重复调用会重置计时器。
+ * 用于搜索框等高频输入场景，避免每次按键触发全量渲染。
+ *
+ * @param {Function} fn 需要防抖的函数。
+ * @param {number} delay 防抖延迟毫秒数。
+ * @returns {Function} 防抖包装后的函数。
+ */
+function debounce(fn, delay) {
+  /** 当前待执行的定时器 ID。 */
+  let timerId = 0;
+
+  return function debounced(...args) {
+    if (timerId) {
+      clearTimeout(timerId);
+    }
+
+    timerId = setTimeout(() => {
+      timerId = 0;
+      fn.apply(this, args);
+    }, delay);
+  };
 }
 
 /**
@@ -344,35 +393,34 @@ function getChromeFaviconUrl(pageUrl) {
   }
 
   try {
-    /** 标准化后的页面 URL。 */
     const parsed = new URL(pageUrl.trim());
 
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
       return "";
     }
 
-    /** Chrome MV3 原生 favicon 入口地址。 */
-    const faviconUrl = new URL(chrome.runtime.getURL("/_favicon/"));
-    faviconUrl.searchParams.set("pageUrl", parsed.href);
-    faviconUrl.searchParams.set("size", "32");
-    return faviconUrl.toString();
+    return `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(parsed.href)}&size=32`;
   } catch (error) {
     return "";
   }
 }
 
 /**
- * 创建站点图标兜底元素。
+ * 从 URL 中提取简洁域名，去掉协议和 www. 前缀，用于卡片副标题展示。
  *
- * @param {string} title 链接或标签标题。
- * @returns {HTMLElement} 兜底图标元素。
+ * @param {string} url 页面地址。
+ * @returns {string} 简洁域名（如 github.com），无法解析时返回空字符串。
  */
-function createFallbackFavicon(title) {
-  /** 无图标地址或不安全时显示的兜底图标。 */
-  const fallback = document.createElement("div");
-  fallback.className = "fallback-icon";
-  fallback.textContent = title ? title.slice(0, 1).toUpperCase() : "⌁";
-  return fallback;
+function extractDomain(url) {
+  if (!url || typeof url !== "string") {
+    return "";
+  }
+
+  try {
+    return new URL(url.trim()).hostname.replace(/^www\./, "");
+  } catch (error) {
+    return "";
+  }
 }
 
 /**
@@ -385,22 +433,26 @@ function createFallbackFavicon(title) {
  * @returns {HTMLElement} 图标或兜底图标元素。
  */
 function createFavicon(src, title, pageUrl = "") {
-  /** 优先使用浏览器缓存中的原生 favicon，保留原始图标作为备用地址。 */
   const faviconUrl = getChromeFaviconUrl(pageUrl) || src;
 
   if (!faviconUrl || !isSafeFaviconUrl(faviconUrl)) {
-    return createFallbackFavicon(title);
+    /** 无图标地址或不安全时显示的兜底图标。 */
+    const fallback = document.createElement("div");
+    fallback.className = "fallback-icon";
+    fallback.textContent = title ? title.slice(0, 1).toUpperCase() : "⌁";
+    return fallback;
   }
 
   /** 站点图标图片元素。 */
   const image = document.createElement("img");
   image.className = "favicon";
-  image.loading = "lazy";
   image.src = faviconUrl;
   image.alt = "";
   image.referrerPolicy = "no-referrer";
   image.addEventListener("error", () => {
-    image.replaceWith(createFallbackFavicon(title));
+    /** 图片加载失败时创建的兜底图标。 */
+    const fallback = createFavicon("", title, "");
+    image.replaceWith(fallback);
   });
   return image;
 }
@@ -427,6 +479,9 @@ root.MyTabDeskUtils = {
   getChromeFaviconUrl,
   getCurrentTime,
   markDirty,
-  isSafeFaviconUrl
+  isSafeFaviconUrl,
+  withSyncLock,
+  debounce,
+  extractDomain
 };
 })(globalThis);

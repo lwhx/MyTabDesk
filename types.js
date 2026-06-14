@@ -14,6 +14,7 @@
  * @property {string} favIconUrl - 网站图标 URL
  * @property {number} createdAt - 创建时间戳（毫秒）
  * @property {number} [updatedAt] - 更新时间戳（毫秒）
+ * @property {number} [order] - 分组内排序值，缺失时按 createdAt 回落，用于保留拖拽顺序
  */
 
 /**
@@ -122,7 +123,8 @@ function createDefaultLink() {
     title: '',
     url: '',
     favIconUrl: '',
-    createdAt: Date.now()
+    createdAt: Date.now(),
+    order: 0
   };
 }
 
