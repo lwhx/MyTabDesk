@@ -1377,6 +1377,20 @@ body[data-theme="dark"] .space-icon {
   box-shadow: inset 0 0 0 1px rgba(220, 38, 38, 0.12);
 }
 
+/* 紧凑视图：只显示图标和标题，缩小卡片高度，让单页容纳更多链接 */
+.app-shell.compact-links .link-card,
+.app-shell.compact-links .link-main-button {
+  min-height: 40px;
+}
+
+.app-shell.compact-links .link-url {
+  display: none;
+}
+
+.app-shell.compact-links .link-main-button {
+  align-items: center;
+}
+
 .link-main-button {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr);

@@ -147,6 +147,7 @@ function bindEvents() {
   safeAddEventListener(elements.toggleThemeBtn, "click", root.MyTabDeskActions.toggleTheme);
   safeAddEventListener(elements.toggleSidebarBtn, "click", root.MyTabDeskActions.toggleSidebar);
   safeAddEventListener(elements.toggleTabsPanelBtn, "click", root.MyTabDeskActions.toggleTabsPanel);
+  safeAddEventListener(elements.toggleCompactLinksBtn, "click", root.MyTabDeskActions.toggleCompactLinks);
   safeAddEventListener(elements.batchDeleteBtn, "click", root.MyTabDeskActions.toggleBatchDelete);
   safeAddEventListener(elements.confirmBatchDeleteBtn, "click", root.MyTabDeskActions.confirmBatchDelete);
   safeAddEventListener(elements.cancelBatchDeleteBtn, "click", root.MyTabDeskActions.toggleBatchDelete);
@@ -290,6 +291,7 @@ function bindElements() {
   elements.searchInput = getElement("searchInput");
   elements.toggleThemeBtn = getElement("toggleThemeBtn");
   elements.toggleTabsPanelBtn = getElement("toggleTabsPanelBtn");
+  elements.toggleCompactLinksBtn = getElement("toggleCompactLinksBtn");
   elements.batchDeleteBtn = getElement("batchDeleteBtn");
   elements.createGroupBtn = getElement("createGroupBtn");
   elements.batchBar = getElement("batchBar");

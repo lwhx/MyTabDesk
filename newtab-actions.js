@@ -1064,6 +1064,17 @@ async function toggleTabsPanel() {
 }
 
 /**
+ * 切换链接卡片紧凑视图（隐藏域名、缩小卡片高度，单页容纳更多链接）。
+ *
+ * @returns {Promise<void>} 切换并保存后结束。
+ */
+async function toggleCompactLinks() {
+  state.data.settings.compactLinks = !state.data.settings.compactLinks;
+  await persistWithDirty();
+  root.MyTabDeskRender.renderAll();
+}
+
+/**
  * 切换批量删除模式。
  *
  * @returns {void}
@@ -1464,6 +1475,7 @@ root.MyTabDeskActions = {
   toggleTheme,
   toggleSidebar,
   toggleTabsPanel,
+  toggleCompactLinks,
   toggleBatchDelete,
   toggleSelectedLink,
   confirmBatchDelete,

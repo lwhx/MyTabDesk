@@ -70,6 +70,7 @@
  * @property {'light'|'dark'} theme - 主题：light（浅色）或 dark（深色）
  * @property {boolean} rightPanelCollapsed - 右侧面板是否折叠
  * @property {boolean} sidebarCollapsed - 侧边栏是否折叠
+ * @property {boolean} compactLinks - 链接卡片是否使用紧凑视图（只显示图标和标题）
  * @property {SyncSettings} sync - 同步配置
  */
 

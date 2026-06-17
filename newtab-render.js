@@ -39,10 +39,14 @@ function applyLayoutSettings() {
   document.body.dataset.theme = settings.theme === "dark" ? "dark" : "light";
   elements.appShell.classList.toggle("sidebar-collapsed", Boolean(settings.sidebarCollapsed));
   elements.appShell.classList.toggle("tabs-panel-collapsed", Boolean(settings.rightPanelCollapsed));
+  elements.appShell.classList.toggle("compact-links", Boolean(settings.compactLinks));
   elements.appShell.classList.toggle("settings-mode", state.viewMode === "settings");
   elements.toggleThemeBtn.textContent = settings.theme === "dark" ? "浅色模式" : "深色模式";
   elements.toggleSidebarBtn.textContent = settings.sidebarCollapsed ? "展开" : "收起";
   elements.toggleTabsPanelBtn.textContent = settings.rightPanelCollapsed ? "展开右栏" : "收起右栏";
+  if (elements.toggleCompactLinksBtn) {
+    elements.toggleCompactLinksBtn.textContent = settings.compactLinks ? "标准视图" : "紧凑视图";
+  }
   elements.batchBar.hidden = !state.batchDeleteEnabled;
   elements.batchDeleteBtn.textContent = state.batchDeleteEnabled ? "退出批量" : "批量删除";
 
