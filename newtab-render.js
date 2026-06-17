@@ -29,49 +29,6 @@ let pendingRenderRequest = false;
 let scheduledRenderTasks = new Set();
 
 /**
- * 使用 requestAnimationFrame 调度渲染任务，避免连续触发导致的重复渲染。
- *
- * @param {string} taskName 任务名称。
- * @param {Function} renderFn 渲染函数。
- * @returns {void}
- */
-function scheduleRender(taskName, renderFn) {
-  scheduledRenderTasks.add(taskName);
-
-  if (pendingRenderRequest) {
-    return;
-  }
-
-  pendingRenderRequest = true;
-  requestAnimationFrame(() => {
-    pendingRenderRequest = false;
-    scheduledRenderTasks.clear();
-    renderFn();
-  });
-}
-
-/**
- * 批量渲染更新，合并多个渲染请求为一次 DOM 更新。
- *
- * @param {Function} renderFn 渲染函数。
- * @returns {void}
- */
-function batchRender(renderFn) {
-  if (pendingRenderRequest) {
-    // 如果已有待处理的渲染请求，只更新任务队列
-    scheduledRenderTasks.add("batch");
-    return;
-  }
-
-  pendingRenderRequest = true;
-  requestAnimationFrame(() => {
-    pendingRenderRequest = false;
-    scheduledRenderTasks.clear();
-    renderFn();
-  });
-}
-
-/**
  * 应用主题、左右栏折叠和批量删除栏等布局状态。
  *
  * @returns {void}
@@ -116,8 +73,6 @@ function renderAll() {
   pendingRenderRequest = true;
   requestAnimationFrame(() => {
     pendingRenderRequest = false;
-
-    const needsRenderAll = scheduledRenderTasks.has("all");
     scheduledRenderTasks.clear();
 
     applyLayoutSettings();
@@ -521,7 +476,8 @@ function createGroupElement(group, activeSpace) {
   /** 折叠箭头图标。 */
   const arrowIcon = document.createElement("span");
   arrowIcon.className = "group-toggle-arrow";
-  arrowIcon.textContent = group.collapsed ? "›" : "›";
+  // 展开与折叠使用同一字符，通过下方 transform 旋转区分朝向
+  arrowIcon.textContent = "›";
   if (group.collapsed) {
     arrowIcon.style.transform = "rotate(-90deg)";
   }
@@ -1170,6 +1126,11 @@ function renderSettingsStatus() {
   elements.syncLastBackupValue.textContent = sync.lastBackupAt > 0 ? formatDateTime(sync.lastBackupAt) : "从未备份";
   elements.syncLastImportValue.textContent = sync.lastImportAt > 0 ? formatDateTime(sync.lastImportAt) : sync.lastSyncAt > 0 ? `最近同步 ${formatDateTime(sync.lastSyncAt)}` : "从未导入";
   elements.syncAutoStatusValue.textContent = getAutoSyncStatusText(sync);
+  // 表单有未保存的编辑时，不回写表单值，避免覆盖用户正在输入的内容；
+  // 仅当表单干净（已保存或刚进入设置页）时才用数据回填表单。
+  if (state.settingsFormDirty) {
+    return;
+  }
   elements.gistSyncSwitch.checked = root.MyTabDeskPage.isSyncProviderEnabled(sync, "gist");
   elements.webdavSyncSwitch.checked = root.MyTabDeskPage.isSyncProviderEnabled(sync, "webdav");
   elements.gistAutoSyncSwitch.checked = Boolean(sync.gistAutoSyncEnabled);

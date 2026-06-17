@@ -21,9 +21,7 @@ const {
   addLinksToGroup,
   findSpace,
   findGroupInSpace,
-  findGroup,
-  findLinkInGroup,
-  findLink
+  findLinkInGroup
 } = app;
 const {
   getActiveSpace,
@@ -965,7 +963,7 @@ async function importSpaceFromText(text) {
   try {
     parsedData = JSON.parse(text);
   } catch (error) {
-    throw new Error("导入空间文件不是有效的 JSON");
+    throw new Error("导入空间文件不是有效的 JSON", { cause: error });
   }
 
   /** 待导入的空间数据。 */
@@ -1264,6 +1262,8 @@ async function addDraggedTabToGroup(spaceId, groupId) {
  */
 function openSettings() {
   state.viewMode = "settings";
+  // 进入设置页时清除表单脏标记，确保用最新数据回填一次表单
+  state.settingsFormDirty = false;
   root.MyTabDeskRender.renderAll();
 }
 

@@ -4,3 +4,5 @@ node_modules/
 *_backup_*.json
 mytabdesk-backup-*.json
 mytabdesk-encrypted-*.json
+dist/
+MyTabDesk-*.zip

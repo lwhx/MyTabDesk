@@ -106,6 +106,8 @@ async function saveSyncSettingsFromForm() {
   const sync = state.data.settings.sync;
 
   Object.assign(sync, form);
+  // 表单已保存到数据，清除脏标记，允许后续渲染回写表单
+  state.settingsFormDirty = false;
   await saveData({ skipAutoSync: true });
   root.MyTabDeskRender.renderSettingsStatus();
 }
@@ -235,9 +237,9 @@ async function runBidirectionalSync(sync, provider) {
 
   if (remoteData) {
     state.data = mergeWorkspaceData(state.data, remoteData, localSync.deviceId);
-    Object.assign(state.data.settings.sync, localSync, {
-      provider
-    });
+    // 保留 localSync 中的原始 provider（可能是 both），不覆盖成当前循环的单个 provider，
+    // 避免 both 模式下循环处理第二个服务商时丢失 both 状态。
+    Object.assign(state.data.settings.sync, localSync);
   }
 
   if (provider === "webdav") {
@@ -387,7 +389,7 @@ async function fetchWithTimeout(url, options) {
     return await fetch(url, requestOptions);
   } catch (error) {
     if (error.name === "AbortError") {
-      throw new Error("远程同步请求超时，请检查网络连接");
+      throw new Error("远程同步请求超时，请检查网络连接", { cause: error });
     }
     throw error;
   } finally {
@@ -505,38 +507,62 @@ async function uploadGist(sync, payload) {
 
 /**
  * 自动查找当前 Token 下已有的 MyTabDesk 同步 Gist。
+ * 通过响应 Link 头翻页，避免用户 Gist 超过 100 个时遗漏同步 Gist 而重复创建。
  *
  * @param {object} sync 同步配置。
  * @returns {Promise<object|null>} 找到的 Gist 摘要对象，未找到时返回 null。
  */
 async function findMyTabDeskGist(sync) {
-  /** Gist 列表请求地址。 */
-  const url = "https://api.github.com/gists?per_page=100";
-  /** Gist 列表响应。 */
-  const response = await fetchWithRetry(url, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${sync.gistToken}`,
-      Accept: "application/vnd.github+json"
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(`GitHub Gist 列表获取失败：${response.status}`);
-  }
-
-  /** Gist 列表数据。 */
-  const gists = await response.json();
   /** 同步文件名。 */
   const filename = sync.gistFilename || "mytabdesk-sync.json";
+  /** 当前请求的 Gist 列表地址，从第一页开始。 */
+  let url = "https://api.github.com/gists?per_page=100";
+  /** 最大翻页次数，防止异常情况下无限循环。 */
+  const maxPages = 10;
 
-  for (const gist of gists) {
-    if (isMyTabDeskGist(gist, filename)) {
-      return gist;
+  for (let page = 0; page < maxPages && url; page += 1) {
+    /** Gist 列表响应。 */
+    const response = await fetchWithRetry(url, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${sync.gistToken}`,
+        Accept: "application/vnd.github+json"
+      }
+    });
+
+    if (!response.ok) {
+      throw new Error(`GitHub Gist 列表获取失败：${response.status}`);
     }
+
+    /** 当前页的 Gist 列表数据。 */
+    const gists = await response.json();
+
+    for (const gist of gists) {
+      if (isMyTabDeskGist(gist, filename)) {
+        return gist;
+      }
+    }
+
+    // 解析 Link 头中的下一页地址，没有则结束翻页
+    url = getNextPageUrl(response);
   }
 
   return null;
+}
+
+/**
+ * 从响应 Link 头中提取下一页地址。
+ *
+ * @param {Response} response fetch 响应。
+ * @returns {string} 下一页地址，没有更多页时返回空字符串。
+ */
+function getNextPageUrl(response) {
+  /** Link 响应头文本。 */
+  const linkHeader = response.headers.get("Link") || "";
+  /** Link 头中 rel="next" 的匹配项。 */
+  const match = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
+
+  return match ? match[1] : "";
 }
 
 /**
@@ -589,6 +615,45 @@ async function downloadGist(sync) {
 }
 
 /**
+ * 获取指定服务商对应的上传/下载按钮元素。
+ *
+ * @param {string} provider 同步服务商。
+ * @param {"upload"|"download"} action 操作类型。
+ * @returns {HTMLElement|null} 按钮元素。
+ */
+function getSyncButton(provider, action) {
+  if (provider === "webdav") {
+    return action === "upload" ? elements.webdavUploadSyncBtn : elements.webdavDownloadSyncBtn;
+  }
+  return action === "upload" ? elements.gistUploadSyncBtn : elements.gistDownloadSyncBtn;
+}
+
+/**
+ * 包裹同步操作，在执行期间禁用按钮并显示“同步中…”状态，结束后恢复。
+ *
+ * @param {HTMLElement} btn 触发操作的按钮。
+ * @param {Function} asyncFn 实际执行的异步操作。
+ * @returns {Promise<void>} 操作完成后结束。
+ */
+async function withSyncButtonLoading(btn, asyncFn) {
+  if (!btn) {
+    return asyncFn();
+  }
+
+  /** 按钮原始文案，用于结束后恢复。 */
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "同步中…";
+
+  try {
+    await asyncFn();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
+/**
  * 手动上传当前数据到云端。
  * 通过 withSyncLock 串行化，避免与自动同步或其它手动操作并发。
  *
@@ -596,7 +661,7 @@ async function downloadGist(sync) {
  * @returns {Promise<void>} 上传完成后结束。
  */
 async function uploadManualSync(provider) {
-  return withSyncLock(async () => {
+  return withSyncButtonLoading(getSyncButton(provider, "upload"), async () => withSyncLock(async () => {
     try {
       selectSyncProvider(provider);
       await saveSyncSettingsFromForm();
@@ -630,9 +695,14 @@ async function uploadManualSync(provider) {
       if (notifications.notifyError) {
         notifications.notifyError("上传失败", error.message || "同步到云端失败");
       }
-      await showAlert(error.message || "上传到云端失败。");
+      await showAlert(error.message || "上传到云端失败。", "上传失败", {
+        actionText: "重试",
+        onAction: () => {
+          uploadManualSync(provider);
+        }
+      });
     }
-  });
+  }));
 }
 
 /**
@@ -643,7 +713,7 @@ async function uploadManualSync(provider) {
  * @returns {Promise<void>} 下载导入完成后结束。
  */
 async function downloadManualSync(provider) {
-  return withSyncLock(async () => {
+  return withSyncButtonLoading(getSyncButton(provider, "download"), async () => withSyncLock(async () => {
     try {
       selectSyncProvider(provider);
       await saveSyncSettingsFromForm();
@@ -680,9 +750,14 @@ async function downloadManualSync(provider) {
       if (notifications.notifyError) {
         notifications.notifyError("下载失败", error.message || "从云端下载失败");
       }
-      await showAlert(error.message || "从云端下载失败。");
+      await showAlert(error.message || "从云端下载失败。", "下载失败", {
+        actionText: "重试",
+        onAction: () => {
+          downloadManualSync(provider);
+        }
+      });
     }
-  });
+  }));
 }
 
 root.MyTabDeskSync = {

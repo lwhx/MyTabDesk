@@ -2,13 +2,11 @@
 const app = root.MyTabDeskPage;
 const {
   state,
-  elements,
   STORAGE_KEY,
   createDefaultData,
   migrateData,
   getCurrentTime,
-  isSyncProviderEnabled,
-  ensureSyncSettings
+  isSyncProviderEnabled
 } = app;
 
 /**

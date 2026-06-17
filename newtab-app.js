@@ -82,6 +82,8 @@ const state = {
   appDialogResolver: null,
   /** 当前页面通用弹窗类型。 */
   appDialogType: "alert",
+  /** 弹窗次要操作（如重试）的回调函数。 */
+  appDialogActionHandler: null,
   /** 是否正在显示创建空间方式菜单。 */
   createSpaceMenuOpen: false,
   /** 当前文件导入模式：data 表示全量数据，space 表示单空间。 */
@@ -95,7 +97,9 @@ const state = {
   /** 图标选择弹窗中当前选中的图标。 */
   selectedSpaceIcon: "",
   /** 当前页面视图模式：workspace 表示工作台，settings 表示设置页。 */
-  viewMode: "workspace"
+  viewMode: "workspace",
+  /** 同步设置表单是否有未保存的编辑，渲染时据此避免覆盖用户输入。 */
+  settingsFormDirty: false
 };
 
 /**

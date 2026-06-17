@@ -1,7 +1,7 @@
 (function (root) {
 const app = root.MyTabDeskPage;
 const { state, elements } = app;
-const { getElement, loadData, saveData, createWorkspaceSnapshot, markDirty, debounce } = root.MyTabDeskUtils;
+const { getElement, loadData, saveData, createWorkspaceSnapshot, debounce } = root.MyTabDeskUtils;
 
 /**
  * 已注册的事件监听器列表，用于页面销毁时统一清理。
@@ -56,6 +56,7 @@ function bindEvents() {
     }
   });
   safeAddEventListener(elements.appDialogCancelBtn, "click", () => root.MyTabDeskDialogs.closeAppDialog(false));
+  safeAddEventListener(elements.appDialogActionBtn, "click", () => root.MyTabDeskDialogs.triggerAppDialogAction());
   safeAddEventListener(elements.appDialogConfirmBtn, "click", () => root.MyTabDeskDialogs.closeAppDialog(true));
   safeAddEventListener(elements.appDialogInput, "keydown", (event) => {
     if (event.key === "Enter") {
@@ -155,12 +156,26 @@ function bindEvents() {
   safeAddEventListener(elements.exportEncryptedBtn, "click", root.MyTabDeskActions.handleExportEncryptedBackup);
   safeAddEventListener(elements.importEncryptedBtn, "click", root.MyTabDeskActions.requestImportEncryptedBackup);
   safeAddEventListener(elements.saveSyncSettingsBtn, "click", root.MyTabDeskSync.handleSaveSyncSettings);
+  // 同步表单文本输入框编辑时标记为脏，避免 renderSettingsStatus 在用户未保存时覆盖输入
+  for (const input of [
+    elements.webdavUrlInput,
+    elements.webdavUsernameInput,
+    elements.webdavPasswordInput,
+    elements.webdavFilenameInput,
+    elements.gistTokenInput,
+    elements.gistIdInput,
+    elements.gistFilenameInput
+  ]) {
+    safeAddEventListener(input, "input", () => {
+      state.settingsFormDirty = true;
+    });
+  }
   safeAddEventListener(elements.gistSyncSwitch, "change", async () => {
-    root.MyTabDeskSync.selectSyncProvider(elements.gistSyncSwitch.checked ? "gist" : "none");
+    // 不调用 selectSyncProvider，避免关闭 gist 时连带关闭 webdav；
+    // 直接以两个开关的实际勾选状态重新计算 provider。
     await root.MyTabDeskSync.saveSyncSettingsFromForm();
   });
   safeAddEventListener(elements.webdavSyncSwitch, "change", async () => {
-    root.MyTabDeskSync.selectSyncProvider(elements.webdavSyncSwitch.checked ? "webdav" : "none");
     await root.MyTabDeskSync.saveSyncSettingsFromForm();
   });
   safeAddEventListener(elements.gistAutoSyncSwitch, "change", root.MyTabDeskSync.saveSyncSettingsFromForm);
@@ -239,6 +254,7 @@ function bindElements() {
   elements.appDialogInputWrap = getElement("appDialogInputWrap");
   elements.appDialogInput = getElement("appDialogInput");
   elements.appDialogCancelBtn = getElement("appDialogCancelBtn");
+  elements.appDialogActionBtn = getElement("appDialogActionBtn");
   elements.appDialogConfirmBtn = getElement("appDialogConfirmBtn");
   elements.editLinkDialog = getElement("editLinkDialog");
   elements.editLinkTitleInput = getElement("editLinkTitleInput");
@@ -337,6 +353,8 @@ async function init() {
   root.MyTabDeskRender.renderAll();
   root.MyTabDeskSync.scheduleAutoSync();
   await root.MyTabDeskActions.refreshCurrentTabs();
+  // state.data 就绪后，消费 background 暂存的右键保存数据
+  await root.MyTabDeskNotifications.checkPendingSaveData();
 }
 
 /**
@@ -370,6 +388,7 @@ function destroy() {
   state.openLinkMenuId = "";
   state.editingLinkContext = null;
   state.appDialogResolver = null;
+  state.appDialogActionHandler = null;
   state.createSpaceMenuOpen = false;
   state.createSpaceDialogOpen = false;
   state.iconPickerSpaceId = "";

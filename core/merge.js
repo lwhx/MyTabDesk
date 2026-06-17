@@ -30,47 +30,82 @@ function pickNewerItem(localItem, remoteItem) {
 /**
  * 合并两个链接列表，按 ID 和 URL 去重并优先保留较新的链接。
  *
+ * 排序策略：order 是各端分组内的本地数组下标，跨端不可比，因此不能直接按 order 排序。
+ * 这里采用「本地顺序优先，远端独有链接追加到末尾」：先按本地顺序保留链接，再把仅远端
+ * 存在的链接按远端顺序接在后面，最后按下标重新分配连续 order，保证两端顺序都不被交叉打散。
+ *
  * @param {Array<object>} localLinks 本地链接列表。
  * @param {Array<object>} remoteLinks 远端链接列表。
  * @returns {Array<object>} 自动合并后的链接列表。
  */
 function mergeLinks(localLinks, remoteLinks) {
-  /** 按链接 ID 记录的合并结果。 */
-  const linkById = new Map();
-  /** 合并输入链接到结果集合的内部函数。 */
-  const appendLink = (rawLink) => {
-    /** 标准化后的链接。 */
-    const link = normalizeLink(rawLink);
-    /** 已存在的同 ID 链接。 */
-    const existingLink = linkById.get(link.id);
+  /** 标准化后的本地链接列表。 */
+  const normalizedLocalLinks = (Array.isArray(localLinks) ? localLinks : []).map(normalizeLink);
+  /** 标准化后的远端链接列表。 */
+  const normalizedRemoteLinks = (Array.isArray(remoteLinks) ? remoteLinks : []).map(normalizeLink);
+  /** 合并结果中已出现过的链接 ID 集合。 */
+  const mergedLinkIds = new Set();
+  /** 合并结果中已出现过的链接 URL 集合。 */
+  const mergedLinkUrls = new Set();
+  /** 合并后的链接列表。 */
+  const mergedLinks = [];
 
-    linkById.set(link.id, existingLink ? pickNewerItem(existingLink, link) : link);
-  };
+  /**
+   * 尝试把链接加入合并结果，按 ID 和 URL 去重，冲突时保留较新的一方。
+   *
+   * @param {object} link 待加入的链接。
+   * @param {boolean} allowAppend 是否允许追加到末尾（远端独有链接才追加）。
+   * @returns {void}
+   */
+  const addLink = (link, allowAppend) => {
+    /** 同 ID 的已合并链接索引。 */
+    const existingIndexById = mergedLinks.findIndex((item) => item.id === link.id);
 
-  for (const link of Array.isArray(localLinks) ? localLinks : []) {
-    appendLink(link);
-  }
-
-  for (const link of Array.isArray(remoteLinks) ? remoteLinks : []) {
-    appendLink(link);
-  }
-
-  /** 按 URL 记录的合并结果。 */
-  const linkByUrl = new Map();
-
-  for (const link of linkById.values()) {
-    /** 已存在的同 URL 链接。 */
-    const existingLink = linkByUrl.get(link.url);
-
-    if (!existingLink) {
-      linkByUrl.set(link.url, link);
-      continue;
+    if (existingIndexById >= 0) {
+      mergedLinks[existingIndexById] = pickNewerItem(mergedLinks[existingIndexById], link);
+      mergedLinkUrls.add(mergedLinks[existingIndexById].url);
+      return;
     }
 
-    linkByUrl.set(link.url, pickNewerItem(existingLink, link));
+    /** 同 URL 的已合并链接索引。 */
+    const existingIndexByUrl = mergedLinks.findIndex((item) => item.url === link.url);
+
+    if (existingIndexByUrl >= 0) {
+      mergedLinks[existingIndexByUrl] = pickNewerItem(mergedLinks[existingIndexByUrl], link);
+      return;
+    }
+
+    if (!allowAppend) {
+      return;
+    }
+
+    mergedLinks.push(link);
+    mergedLinkIds.add(link.id);
+    mergedLinkUrls.add(link.url);
+  };
+
+  // 先按本地顺序合并本地链接，保留用户在本地的拖拽顺序
+  for (const link of normalizedLocalLinks) {
+    if (!link.url) {
+      continue;
+    }
+    addLink(link, true);
   }
 
-  return Array.from(linkByUrl.values()).sort((a, b) => (a.order || 0) - (b.order || 0));
+  // 再按远端顺序补充仅远端独有的链接，追加到末尾
+  for (const link of normalizedRemoteLinks) {
+    if (!link.url) {
+      continue;
+    }
+    addLink(link, !mergedLinkIds.has(link.id) && !mergedLinkUrls.has(link.url));
+  }
+
+  // 合并后按下标重新分配连续 order，避免两端 order 交叉错乱
+  mergedLinks.forEach((link, index) => {
+    link.order = index;
+  });
+
+  return mergedLinks;
 }
 
 /**

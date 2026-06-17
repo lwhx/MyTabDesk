@@ -438,6 +438,15 @@ setupAutoSyncAlarm();
 initializeContextMenus();
 
 /**
+ * 监听右键菜单点击事件，分发给对应处理函数。
+ */
+chrome.contextMenus.onClicked.addListener((info, tab) => {
+  handleContextMenuClick(info, tab).catch((error) => {
+    console.error("右键菜单处理失败:", error);
+  });
+});
+
+/**
  * 监听自动同步闹钟唤醒事件。
  */
 chrome.alarms.onAlarm.addListener((alarm) => {

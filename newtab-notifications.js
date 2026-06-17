@@ -1,7 +1,4 @@
 (function (root) {
-const app = root.MyTabDeskPage;
-const { state } = app;
-
 /**
  * 通知类型枚举
  * @readonly
@@ -22,18 +19,6 @@ const NotificationConfig = {
   [NotificationType.ERROR]: { duration: 5000, priority: 2 },
   [NotificationType.WARNING]: { duration: 4000, priority: 1 },
   [NotificationType.INFO]: { duration: 3000, priority: 1 }
-};
-
-/**
- * 队列管理，避免通知重叠
- */
-const notificationQueue = {
-  /** 当前正在显示的通知ID */
-  currentId: null,
-  /** 等待显示的通知队列 */
-  pending: [],
-  /** 处理间隔（毫秒） */
-  interval: 100
 };
 
 /**
@@ -223,38 +208,32 @@ function initializeMessageListener() {
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === "link-saved" || message.type === "page-saved" || message.type === "tab-saved") {
-      // 通知用户有新的保存数据
+      // 推送已携带保存数据，直接处理（handleExternalSaveData 内部会消费并清空 background 暂存）。
+      // 不再重复发送 get-pending-save，避免与 checkPendingSaveData 竞态导致 pending 数据被重复消费丢失。
       if (message.data) {
-        showInAppToast(`已从右键菜单保存「${message.data.title}」`, "success");
+        handleExternalSaveData(message.data).catch((error) => {
+          console.error("处理右键保存数据失败：", error);
+        });
       }
       sendResponse({ success: true });
       return true;
     }
-
-    // 处理获取待保存数据的请求
-    if (message.type === "get-pending-save") {
-      chrome.runtime.sendMessage({ type: "get-pending-save" }, (response) => {
-        if (response && response.data) {
-          handleExternalSaveData(response.data);
-        }
-      });
-      sendResponse({ success: true });
-      return true;
-    }
   });
-
-  // 页面加载时检查是否有待保存数据
-  checkPendingSaveData();
 }
 
 /**
- * 检查并处理待保存数据
+ * 检查并处理待保存数据。仅在页面初始化、state.data 就绪后由 main.js 调用，
+ * 避免在 state.data 为 null 时消费并丢失 background 暂存的保存数据。
  */
 async function checkPendingSaveData() {
+  if (typeof chrome === "undefined" || !chrome.runtime) {
+    return;
+  }
+
   try {
     const response = await chrome.runtime.sendMessage({ type: "get-pending-save" });
     if (response && response.data) {
-      handleExternalSaveData(response.data);
+      await handleExternalSaveData(response.data);
     }
   } catch (error) {
     // 静默处理，页面可能没有权限
@@ -268,6 +247,12 @@ async function checkPendingSaveData() {
  */
 async function handleExternalSaveData(data) {
   if (!data || !data.url) {
+    return;
+  }
+
+  // 数据未就绪（页面仍在初始化）时静默返回，交给 init 完成后的 checkPendingSaveData 兜底消费，
+  // 避免在 state.data 为 null 时误判为“没有分组”而丢失保存数据。
+  if (!root.MyTabDeskPage.state.data) {
     return;
   }
 
@@ -330,10 +315,12 @@ root.MyTabDeskNotifications = {
   notifyError,
   notifyWarning,
   notifyInfo,
-  initializeMessageListener
+  initializeMessageListener,
+  checkPendingSaveData
 };
 
-// 自动初始化
+// 仅自动注册消息监听器（轻量、无副作用）；待保存数据的消费由 main.js 在 init 完成、
+// state.data 就绪后显式调用 checkPendingSaveData，避免在数据未就绪时消费丢失。
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", initializeMessageListener);
 } else {

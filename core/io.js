@@ -76,7 +76,7 @@ function importData(text) {
   try {
     parsedData = JSON.parse(text);
   } catch (error) {
-    throw new Error("导入文件不是有效的 JSON");
+    throw new Error("导入文件不是有效的 JSON", { cause: error });
   }
 
   return migrateData(extractBackupData(parsedData));

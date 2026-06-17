@@ -294,7 +294,7 @@ async function restoreEncryptedBackup(text, password) {
   try {
     backupData = JSON.parse(text);
   } catch (error) {
-    throw new Error("密码错误或文件损坏");
+    throw new Error("密码错误或文件损坏", { cause: error });
   }
 
   if (!backupData || !backupData.payload) {
@@ -313,7 +313,7 @@ async function restoreEncryptedBackup(text, password) {
       throw new Error("不支持的加密备份格式");
     }
   } catch (error) {
-    throw new Error("密码错误或文件损坏");
+    throw new Error("密码错误或文件损坏", { cause: error });
   }
 
   /** 解密后的数据对象。 */
@@ -322,7 +322,7 @@ async function restoreEncryptedBackup(text, password) {
   try {
     decryptedData = JSON.parse(plainText);
   } catch (error) {
-    throw new Error("密码错误或文件损坏");
+    throw new Error("密码错误或文件损坏", { cause: error });
   }
 
   return migrateData(extractBackupData(decryptedData));

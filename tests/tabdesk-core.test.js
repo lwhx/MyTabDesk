@@ -1510,8 +1510,7 @@ function testMergeWorkspaceDataKeepsBothSidesNewItems() {
  *
  * @returns {void}
  */
-function testMergeWorkspaceDataMergesLinksWithoutPrompt() {
-  /** 本地工作台数据。 */
+function testMergeWorkspaceDataMergesLinksWithoutPrompt() {  /** 本地工作台数据。 */
   const localData = normalizeData({
     version: 1,
     activeSpaceId: "space-a",
@@ -1583,8 +1582,73 @@ function testMergeWorkspaceDataMergesLinksWithoutPrompt() {
   const links = mergeWorkspaceData(localData, remoteData, "device-local").spaces[0].groups[0].links;
 
   assert.equal(links.length, 3);
-  assert.deepEqual(links.map((link) => link.url), ["https://local.example.com", "https://same.example.com", "https://remote.example.com"]);
+  // 本地顺序优先（same 在 local 之前），远端独有的 remote 追加到末尾
+  assert.deepEqual(links.map((link) => link.url), ["https://same.example.com", "https://local.example.com", "https://remote.example.com"]);
   assert.equal(links.find((link) => link.url === "https://same.example.com").title, "远端标题");
+}
+
+/**
+ * 测试两端各自拖拽排序后合并，本地顺序不被远端 order 交叉打散，且 order 连续不重复。
+ *
+ * @returns {void}
+ */
+function testMergeWorkspaceDataKeepsLocalOrderWithRemoteAppended() {
+  /** 本地分组内已排序的链接，order 为本地数组下标。 */
+  const localData = normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A",
+        updatedAt: 100,
+        groups: [
+          {
+            id: "group-a",
+            name: "分组 A",
+            updatedAt: 100,
+            links: [
+              { id: "link-1", title: "A", url: "https://a.com", order: 0, createdAt: 1 },
+              { id: "link-2", title: "B", url: "https://b.com", order: 1, createdAt: 2 },
+              { id: "link-3", title: "C", url: "https://c.com", order: 2, createdAt: 3 }
+            ]
+          }
+        ]
+      }
+    ],
+    settings: {}
+  });
+  /** 远端独有链接，order 为远端数组下标，与本地 order 重叠。 */
+  const remoteData = normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [
+      {
+        id: "space-a",
+        name: "空间 A",
+        updatedAt: 200,
+        groups: [
+          {
+            id: "group-a",
+            name: "分组 A",
+            updatedAt: 200,
+            links: [
+              { id: "link-4", title: "D", url: "https://d.com", order: 0, createdAt: 4 },
+              { id: "link-5", title: "E", url: "https://e.com", order: 1, createdAt: 5 }
+            ]
+          }
+        ]
+      }
+    ],
+    settings: {}
+  });
+  /** 自动合并后的链接列表。 */
+  const links = mergeWorkspaceData(localData, remoteData, "device-local").spaces[0].groups[0].links;
+
+  // 本地顺序保持不变，远端独有链接按远端顺序追加到末尾，不被交叉打散
+  assert.deepEqual(links.map((link) => link.id), ["link-1", "link-2", "link-3", "link-4", "link-5"]);
+  // 合并后 order 必须连续且唯一，避免下次合并再次错乱
+  assert.deepEqual(links.map((link) => link.order), [0, 1, 2, 3, 4]);
 }
 
 /**
@@ -1899,6 +1963,7 @@ async function runTests() {
   testAddLinksToGroupDedupesByUrl();
   testMergeWorkspaceDataKeepsBothSidesNewItems();
   testMergeWorkspaceDataMergesLinksWithoutPrompt();
+  testMergeWorkspaceDataKeepsLocalOrderWithRemoteAppended();
   testClearAllDataReturnsDefaultData();
   // 新增测试用例
   testFindGroupLocatesGroup();
