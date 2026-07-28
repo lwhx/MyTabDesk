@@ -208,17 +208,50 @@ function initializeMessageListener() {
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.type === "link-saved" || message.type === "page-saved" || message.type === "tab-saved") {
-      // 推送已携带保存数据，直接处理（handleExternalSaveData 内部会消费并清空 background 暂存）。
-      // 不再重复发送 get-pending-save，避免与 checkPendingSaveData 竞态导致 pending 数据被重复消费丢失。
-      if (message.data) {
-        handleExternalSaveData(message.data).catch((error) => {
-          console.error("处理右键保存数据失败：", error);
-        });
-      }
+      // runtime 消息会广播给所有已打开的扩展页面。统一向后台原子消费 pending 数据，
+      // 只有第一个页面能取得记录，避免多页面同时用不同 ID 保存出重复链接。
+      checkPendingSaveData().catch((error) => {
+        console.error("处理右键保存数据失败：", error);
+      });
+      sendResponse({ success: true });
+      return true;
+    }
+
+    if (message.type === "run-auto-sync") {
+      // 后台 alarms 唤醒：页面打开期间由 Service Worker 触发的定时同步。
+      runLeasedAutoSync().catch((error) => {
+        console.error("后台唤醒自动同步失败：", error);
+      });
       sendResponse({ success: true });
       return true;
     }
   });
+}
+
+/**
+ * 申请后台租约后执行一次自动同步，确保多个工作台页面中只有一个运行。
+ *
+ * @returns {Promise<boolean>} 实际取得租约并执行时返回 true。
+ */
+async function runLeasedAutoSync() {
+  if (!root.MyTabDeskSync || typeof root.MyTabDeskSync.runAutoSyncNow !== "function") {
+    return false;
+  }
+
+  const lease = await chrome.runtime.sendMessage({ type: "claim-auto-sync" });
+  if (!lease || !lease.claimed) {
+    return false;
+  }
+
+  try {
+    await root.MyTabDeskSync.runAutoSyncNow();
+    return true;
+  } finally {
+    await chrome.runtime.sendMessage({
+      type: "release-auto-sync",
+      leaseId: lease.leaseId
+    });
+  }
 }
 
 /**
@@ -231,12 +264,54 @@ async function checkPendingSaveData() {
   }
 
   try {
-    const response = await chrome.runtime.sendMessage({ type: "get-pending-save" });
-    if (response && response.data) {
-      await handleExternalSaveData(response.data);
+    while (true) {
+      const response = await chrome.runtime.sendMessage({ type: "claim-pending-save" });
+      if (!response || !response.data) {
+        return;
+      }
+
+      const data = response.data;
+      try {
+        await handleExternalSaveData(data);
+        const ack = await chrome.runtime.sendMessage({
+          type: "ack-pending-save",
+          requestId: data.requestId
+        });
+        if (!ack || ack.success !== true) {
+          throw new Error("确认保存请求失败，已保留请求供重试");
+        }
+      } catch (error) {
+        await chrome.runtime.sendMessage({
+          type: "release-pending-save",
+          requestId: data.requestId
+        });
+        throw error;
+      }
     }
   } catch (error) {
-    // 静默处理，页面可能没有权限
+    console.error("待保存请求处理失败：", error);
+    throw error;
+  }
+}
+
+/**
+ * 检查并消费后台自动同步唤醒标记。
+ *
+ * 后台 alarms 触发时如果没有扩展页面打开，会留下一个待处理标记。
+ * 页面启动时消费该标记，触发一次补同步。
+ */
+async function checkPendingAutoSyncWake() {
+  if (typeof chrome === "undefined" || !chrome.runtime) {
+    return;
+  }
+
+  try {
+    const response = await chrome.runtime.sendMessage({ type: "consume-auto-sync-wake" });
+    if (response && response.pendingAt > 0) {
+      await runLeasedAutoSync();
+    }
+  } catch {
+    // 静默处理
   }
 }
 
@@ -250,23 +325,19 @@ async function handleExternalSaveData(data) {
     return;
   }
 
-  // 数据未就绪（页面仍在初始化）时静默返回，交给 init 完成后的 checkPendingSaveData 兜底消费，
-  // 避免在 state.data 为 null 时误判为“没有分组”而丢失保存数据。
+  // 数据未就绪时必须让 claim 失败并 release，不能返回后被外层误 ack。
   if (!root.MyTabDeskPage.state.data) {
-    return;
+    throw new Error("工作台页面尚未初始化完成");
   }
 
   // 获取当前激活空间
   const activeSpace = root.MyTabDeskUtils.getActiveSpace();
   if (!activeSpace) {
     showInAppToast("请先创建一个分组后再使用右键保存", "warning");
-    return;
+    throw new Error("当前没有可用空间");
   }
 
-  if (!activeSpace.groups || activeSpace.groups.length === 0) {
-    showInAppToast("请先创建一个分组后再使用右键保存", "warning");
-    return;
-  }
+  const targetGroup = Array.isArray(activeSpace.groups) ? activeSpace.groups.find((group) => !group.deletedAt) : null;
 
   // 显示保存提示
   showInAppToast(`正在将「${data.title}」保存到第一个分组...`, "info");
@@ -274,7 +345,7 @@ async function handleExternalSaveData(data) {
   // 使用 actions 模块添加链接
   if (root.MyTabDeskActions && typeof root.MyTabDeskActions.addExternalLink === "function") {
     await root.MyTabDeskActions.addExternalLink(data);
-    showInAppToast(`已将「${data.title}」保存到「${activeSpace.groups[0].name}」`, "success");
+    showInAppToast(`已将「${data.title}」保存到「${targetGroup ? targetGroup.name : "收集箱"}」`, "success");
   }
 }
 
@@ -316,7 +387,9 @@ root.MyTabDeskNotifications = {
   notifyWarning,
   notifyInfo,
   initializeMessageListener,
-  checkPendingSaveData
+  runLeasedAutoSync,
+  checkPendingSaveData,
+  checkPendingAutoSyncWake
 };
 
 // 仅自动注册消息监听器（轻量、无副作用）；待保存数据的消费由 main.js 在 init 完成、

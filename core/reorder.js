@@ -247,8 +247,8 @@ function addLinksToGroup(data, spaceId, groupId, rawLinks) {
     return nextData;
   }
 
-  /** 分组内已经存在的 URL 集合。 */
-  const existingUrls = new Set(group.links.map((link) => link.url));
+  /** 分组内尚未删除的 URL 集合；墓碑 URL 允许用户重新添加。 */
+  const existingUrls = new Set(group.links.filter((link) => !link.deletedAt).map((link) => link.url));
   /** 本次真正需要新增的链接数组。 */
   const nextLinks = [];
 

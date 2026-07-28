@@ -34,44 +34,88 @@ const AUTO_SYNC_PERIOD_MINUTES = 30;
  */
 const AUTO_SYNC_WAKE_KEY = "mytabdesk_auto_sync_wake_pending";
 
-/**
- * 待保存的链接或页面信息，用于在后台和 MyTabDesk 主页面之间传递一次性保存数据。
- *
- * @type {object|null}
- */
-let pendingSaveData = null;
+/** 自动同步执行租约的持久化存储键。 */
+const AUTO_SYNC_LEASE_KEY = "mytabdesk_auto_sync_lease";
+
+/** 自动同步租约时长，页面异常退出后可自动恢复。 */
+const AUTO_SYNC_LEASE_MS = 5 * 60 * 1000;
+
+/** 自动同步租约操作串行链，保证 claim/release 的读写事务不并发。 */
+let autoSyncLeaseChain = Promise.resolve();
 
 /**
- * 从持久化存储中加载待保存数据。
- * Service Worker 重启后会调用此函数恢复数据。
+ * 待保存请求队列，用于在后台和 MyTabDesk 主页面之间可靠传递保存数据。
+ *
+ * @type {Array<object>}
+ */
+let pendingSaveQueue = [];
+
+/** 当前已被页面认领、尚未确认的请求 ID。 */
+let claimedPendingSaveId = "";
+
+/** 待保存数据消费串行链，确保多个扩展页面不能重复取得同一条记录。 */
+let pendingSaveConsumeChain = Promise.resolve();
+
+/**
+ * 从持久化存储中加载待保存队列。
+ * Service Worker 重启后会调用此函数恢复数据，并兼容旧版单对象格式。
  *
  * @returns {Promise<void>}
  */
 async function loadPendingSaveData() {
   try {
     const result = await chrome.storage.local.get(PENDING_SAVE_KEY);
-    if (result && result[PENDING_SAVE_KEY]) {
-      pendingSaveData = result[PENDING_SAVE_KEY];
-      // 加载后清除存储中的数据，避免重复消费
-      await chrome.storage.local.remove(PENDING_SAVE_KEY);
+    const stored = result && result[PENDING_SAVE_KEY];
+    if (Array.isArray(stored)) {
+      pendingSaveQueue = stored;
+    } else if (stored && typeof stored === "object") {
+      pendingSaveQueue = [{
+        requestId: stored.requestId || `legacy-${stored.timestamp || Date.now()}`,
+        ...stored
+      }];
     }
   } catch (error) {
     console.error("加载待保存数据失败:", error);
+    throw error;
   }
 }
 
 /**
- * 将待保存数据持久化到存储中，防止 Service Worker 重启后丢失。
+ * 持久化待保存队列，防止 Service Worker 重启后丢失。
  *
- * @param {object} data 待保存的数据。
+ * @param {Array<object>} queue 待保存请求队列。
  * @returns {Promise<void>}
  */
-async function persistPendingSaveData(data) {
+async function persistPendingSaveData(queue) {
   try {
-    await chrome.storage.local.set({ [PENDING_SAVE_KEY]: data });
+    if (queue.length === 0) {
+      await chrome.storage.local.remove(PENDING_SAVE_KEY);
+    } else {
+      await chrome.storage.local.set({ [PENDING_SAVE_KEY]: queue });
+    }
   } catch (error) {
     console.error("持久化待保存数据失败:", error);
+    throw error;
   }
+}
+
+/**
+ * 把保存请求加入队列，避免快速连续右键时互相覆盖。
+ *
+ * @param {object} data 保存请求数据。
+ * @returns {Promise<object>} 带请求 ID 的队列记录。
+ */
+async function enqueuePendingSave(data) {
+  return withPendingSaveLock(async () => {
+    await loadPendingSaveData();
+    const record = {
+      requestId: `save-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      ...data
+    };
+    pendingSaveQueue.push(record);
+    await persistPendingSaveData(pendingSaveQueue);
+    return record;
+  });
 }
 
 /**
@@ -149,13 +193,12 @@ async function saveLinkToMyTabDesk(url, title) {
     timestamp: Date.now()
   };
 
-  pendingSaveData = data;
-  await persistPendingSaveData(data);
+  await enqueuePendingSave(data);
   notifyMyTabDeskPage("link-saved");
   showNotification(
-    "链接已保存",
-    `已将「${title || url}」保存到 MyTabDesk`,
-    "success"
+    "保存请求已提交",
+    `正在将「${title || url}」保存到 MyTabDesk`,
+    "info"
   );
 }
 
@@ -176,13 +219,12 @@ async function savePageToMyTabDesk(url, title, favIconUrl) {
     timestamp: Date.now()
   };
 
-  pendingSaveData = data;
-  await persistPendingSaveData(data);
+  await enqueuePendingSave(data);
   notifyMyTabDeskPage("page-saved");
   showNotification(
-    "页面已保存",
-    `已将「${title || url}」保存到 MyTabDesk`,
-    "success"
+    "保存请求已提交",
+    `正在将「${title || url}」保存到 MyTabDesk`,
+    "info"
   );
 }
 
@@ -207,10 +249,9 @@ async function saveCurrentTab(tab) {
     timestamp: Date.now()
   };
 
-  pendingSaveData = data;
-  await persistPendingSaveData(data);
+  await enqueuePendingSave(data);
   notifyMyTabDeskPage("tab-saved");
-  showNotification("标签页已保存", `已将「${tab.title || tab.url}」保存到 MyTabDesk`, "success");
+  showNotification("保存请求已提交", `正在将「${tab.title || tab.url}」保存到 MyTabDesk`, "info");
 }
 
 /**
@@ -226,26 +267,50 @@ function openMyTabDesk() {
 }
 
 /**
- * 通知指定标签页并兼容不同浏览器对扩展消息 API 的返回值实现。
+ * 判断 URL 是否为可保存的 http/https 网页地址。
  *
- * @param {number} tabId 标签页 ID。
- * @param {object} message 消息内容。
- * @returns {void}
+ * @param {string} url 待检查的 URL。
+ * @returns {boolean} 可保存时返回 true。
  */
-function sendMessageToTab(tabId, message) {
-  if (!tabId) {
-    return;
+function isSavableWebUrl(url) {
+  if (!url || typeof url !== "string") {
+    return false;
   }
 
   try {
-    chrome.tabs.sendMessage(tabId, message, () => {
-      if (chrome.runtime.lastError) {
-        return;
-      }
-    });
-  } catch (error) {
-    return;
+    const parsedUrl = new URL(url.trim());
+    return parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:";
+  } catch {
+    return false;
   }
+}
+
+/**
+ * 向所有已打开的 MyTabDesk 扩展页面发送消息。
+ *
+ * 扩展页面（newtab.html）监听的是 chrome.runtime.onMessage，
+ * 因此必须使用 chrome.runtime.sendMessage 而非 chrome.tabs.sendMessage
+ * （后者只能到达 content script，无法投递到扩展页面）。
+ *
+ * @param {object} message 消息内容。
+ * @returns {void}
+ */
+function sendMessageToExtensionPages(message) {
+  try {
+    chrome.runtime.sendMessage(message);
+  } catch (error) {
+    console.warn("消息发送异常:", error);
+  }
+}
+
+/**
+ * 检查是否有已打开的 MyTabDesk 扩展页面。
+ *
+ * @returns {Promise<boolean>} 有扩展页面打开时返回 true。
+ */
+async function hasOpenExtensionPage() {
+  const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL("newtab.html") });
+  return tabs.length > 0;
 }
 
 /**
@@ -255,16 +320,9 @@ function sendMessageToTab(tabId, message) {
  * @returns {Promise<void>}
  */
 async function notifyMyTabDeskPage(eventType) {
-  /** 当前待通知的保存数据快照。 */
-  const notificationData = pendingSaveData;
-
-  const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL("newtab.html") });
-  for (const tab of tabs) {
-    sendMessageToTab(tab.id, {
-      type: eventType,
-      data: notificationData
-    });
-  }
+  sendMessageToExtensionPages({
+    type: eventType
+  });
 }
 
 /**
@@ -286,21 +344,19 @@ function setupAutoSyncAlarm() {
  * @returns {Promise<void>} 通知完成后结束。
  */
 async function notifyMyTabDeskAutoSync() {
-  /** 当前打开的 MyTabDesk 页面列表。 */
-  const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL("newtab.html") });
+  /** 当前是否有 MyTabDesk 扩展页面打开。 */
+  const hasPage = await hasOpenExtensionPage();
 
-  if (tabs.length === 0) {
+  if (!hasPage) {
     await chrome.storage.local.set({
       [AUTO_SYNC_WAKE_KEY]: Date.now()
     });
     return;
   }
 
-  for (const tab of tabs) {
-    sendMessageToTab(tab.id, {
-      type: "run-auto-sync"
-    });
-  }
+  sendMessageToExtensionPages({
+    type: "run-auto-sync"
+  });
 }
 
 /**
@@ -359,41 +415,165 @@ function showNotification(title, message, type = "info") {
 }
 
 /**
- * 获取待保存的数据，并在读取后清空暂存值。
- * 如果内存中没有数据，会尝试从持久化存储中恢复。
+ * 认领队首待保存请求，但不删除；页面保存成功后必须显式 ack。
  *
- * @returns {Promise<object|null>} 待保存的数据。
+ * @returns {Promise<object|null>} 只有第一个认领者能得到队首记录。
  */
-async function getPendingSaveData() {
-  // 如果内存中没有数据，尝试从持久化存储中恢复
-  if (!pendingSaveData) {
-    await loadPendingSaveData();
+async function claimPendingSaveData() {
+  await loadPendingSaveData();
+  if (claimedPendingSaveId || pendingSaveQueue.length === 0) {
+    return null;
   }
 
-  /** 当前待保存的数据。 */
-  const data = pendingSaveData;
+  claimedPendingSaveId = pendingSaveQueue[0].requestId;
+  return pendingSaveQueue[0];
+}
 
-  pendingSaveData = null;
-  // 同时清除持久化存储中的数据
-  try {
-    await chrome.storage.local.remove(PENDING_SAVE_KEY);
-  } catch (error) {
-    console.error("清除持久化待保存数据失败:", error);
+/**
+ * 确认保存成功并删除已认领记录。
+ *
+ * @param {string} requestId 请求 ID。
+ * @returns {Promise<boolean>} 确认成功时返回 true。
+ */
+async function ackPendingSaveData(requestId) {
+  if (!requestId || requestId !== claimedPendingSaveId) {
+    return false;
   }
 
-  return data;
+  const record = pendingSaveQueue.find((item) => item.requestId === requestId);
+  const nextQueue = pendingSaveQueue.filter((item) => item.requestId !== requestId);
+  await persistPendingSaveData(nextQueue);
+  pendingSaveQueue = nextQueue;
+  claimedPendingSaveId = "";
+  showNotification("已保存到 MyTabDesk", `已保存「${record && (record.title || record.url) || "网页"}」`, "success");
+  return true;
+}
+
+/**
+ * 释放失败的认领，保留记录供下次重试。
+ *
+ * @param {string} requestId 请求 ID。
+ * @returns {boolean} 释放成功时返回 true。
+ */
+function releasePendingSaveData(requestId) {
+  if (!requestId || requestId !== claimedPendingSaveId) {
+    return false;
+  }
+  claimedPendingSaveId = "";
+  return true;
+}
+
+/**
+ * 串行执行 pending 队列操作。
+ *
+ * @param {Function} fn 队列操作。
+ * @returns {Promise<*>} 操作结果。
+ */
+function withPendingSaveLock(fn) {
+  const task = pendingSaveConsumeChain.then(fn, fn);
+  pendingSaveConsumeChain = task.then(() => undefined, () => undefined);
+  return task;
+}
+
+/**
+ * 串行执行自动同步租约操作。
+ *
+ * @param {Function} fn 租约操作。
+ * @returns {Promise<*>} 操作结果。
+ */
+function withAutoSyncLeaseLock(fn) {
+  const task = autoSyncLeaseChain.then(fn, fn);
+  autoSyncLeaseChain = task.then(() => undefined, () => undefined);
+  return task;
+}
+
+/**
+ * 申请持久化自动同步租约。
+ *
+ * @returns {Promise<object>} claim 结果。
+ */
+async function claimAutoSyncLease() {
+  const now = Date.now();
+  const result = await chrome.storage.local.get(AUTO_SYNC_LEASE_KEY);
+  const currentLease = result && result[AUTO_SYNC_LEASE_KEY];
+
+  if (currentLease && currentLease.expiresAt > now) {
+    return { claimed: false };
+  }
+
+  const lease = {
+    leaseId: `sync-${now}-${Math.random().toString(36).slice(2)}`,
+    expiresAt: now + AUTO_SYNC_LEASE_MS
+  };
+  await chrome.storage.local.set({ [AUTO_SYNC_LEASE_KEY]: lease });
+  return { claimed: true, leaseId: lease.leaseId };
+}
+
+/**
+ * 仅由租约所有者释放自动同步租约。
+ *
+ * @param {string} leaseId 租约 ID。
+ * @returns {Promise<boolean>} 释放成功时返回 true。
+ */
+async function releaseAutoSyncLease(leaseId) {
+  if (!leaseId) {
+    return false;
+  }
+
+  const result = await chrome.storage.local.get(AUTO_SYNC_LEASE_KEY);
+  const currentLease = result && result[AUTO_SYNC_LEASE_KEY];
+  if (!currentLease || currentLease.leaseId !== leaseId) {
+    return false;
+  }
+
+  await chrome.storage.local.remove(AUTO_SYNC_LEASE_KEY);
+  return true;
 }
 
 /**
  * 监听来自扩展页面的消息。
  */
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === "get-pending-save") {
-    // 返回 Promise 以支持异步的 getPendingSaveData
-    getPendingSaveData().then((data) => {
+  if (message.type === "claim-pending-save" || message.type === "get-pending-save") {
+    withPendingSaveLock(() => claimPendingSaveData()).then((data) => {
       sendResponse({ data });
     });
-    return true; // 表示异步响应
+    return true;
+  }
+
+  if (message.type === "ack-pending-save") {
+    withPendingSaveLock(() => ackPendingSaveData(message.requestId)).then((success) => {
+      sendResponse({ success });
+    }).catch((error) => {
+      console.error("确认待保存请求失败:", error);
+      sendResponse({ success: false });
+    });
+    return true;
+  }
+
+  if (message.type === "release-pending-save") {
+    withPendingSaveLock(() => releasePendingSaveData(message.requestId)).then((success) => {
+      sendResponse({ success });
+    });
+    return true;
+  }
+
+  if (message.type === "claim-auto-sync") {
+    withAutoSyncLeaseLock(() => claimAutoSyncLease()).then(sendResponse).catch((error) => {
+      console.error("申请自动同步租约失败:", error);
+      sendResponse({ claimed: false });
+    });
+    return true;
+  }
+
+  if (message.type === "release-auto-sync") {
+    withAutoSyncLeaseLock(() => releaseAutoSyncLease(message.leaseId)).then((success) => {
+      sendResponse({ success });
+    }).catch((error) => {
+      console.error("释放自动同步租约失败:", error);
+      sendResponse({ success: false });
+    });
+    return true;
   }
 
   if (message.type === "show-notification") {

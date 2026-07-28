@@ -165,7 +165,8 @@ function bindEvents() {
     elements.webdavFilenameInput,
     elements.gistTokenInput,
     elements.gistIdInput,
-    elements.gistFilenameInput
+    elements.gistFilenameInput,
+    elements.syncEncryptionPasswordInput
   ]) {
     safeAddEventListener(input, "input", () => {
       state.settingsFormDirty = true;
@@ -317,6 +318,7 @@ function bindElements() {
   elements.gistTokenInput = getElement("gistTokenInput");
   elements.gistIdInput = getElement("gistIdInput");
   elements.gistFilenameInput = getElement("gistFilenameInput");
+  elements.syncEncryptionPasswordInput = getElement("syncEncryptionPasswordInput");
   elements.saveSyncSettingsBtn = getElement("saveSyncSettingsBtn");
   elements.gistUploadSyncBtn = getElement("gistUploadSyncBtn");
   elements.gistDownloadSyncBtn = getElement("gistDownloadSyncBtn");
@@ -357,6 +359,8 @@ async function init() {
   await root.MyTabDeskActions.refreshCurrentTabs();
   // state.data 就绪后，消费 background 暂存的右键保存数据
   await root.MyTabDeskNotifications.checkPendingSaveData();
+  // 消费后台 alarms 唤醒标记：如果后台触发同步时页面未打开，现在补同步
+  await root.MyTabDeskNotifications.checkPendingAutoSyncWake();
 }
 
 /**
@@ -406,5 +410,19 @@ root.MyTabDeskMain = {
   cleanupEventListeners
 };
 
-document.addEventListener("DOMContentLoaded", init);
+document.addEventListener("DOMContentLoaded", () => {
+  init().catch((error) => {
+    console.error("初始化失败:", error);
+    document.body.innerHTML = "";
+    const errorDiv = document.createElement("div");
+    errorDiv.style.cssText = "padding:32px;font-family:system-ui,sans-serif;color:#d32f2f;text-align:center;line-height:1.8;";
+    errorDiv.textContent = "数据加载失败，请尝试刷新页面。如问题持续，可在扩展管理页禁用后重新启用 MyTabDesk。";
+    const retryBtn = document.createElement("button");
+    retryBtn.textContent = "重试";
+    retryBtn.style.cssText = "display:block;margin:16px auto 0;padding:8px 24px;font-size:14px;cursor:pointer;border:1px solid #d32f2f;background:#fff;color:#d32f2f;border-radius:4px;";
+    retryBtn.addEventListener("click", () => location.reload());
+    errorDiv.appendChild(retryBtn);
+    document.body.appendChild(errorDiv);
+  });
+});
 })(globalThis);

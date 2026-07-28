@@ -241,6 +241,11 @@
               </article>
             </div>
             <p class="settings-hint">同步配置仅保存在浏览器本地。请使用专用应用密码或最小权限 Token，不要把密码或 Token 写入代码仓库。</p>
+            <div class="settings-row">
+              <label class="settings-label" for="syncEncryptionPasswordInput">同步加密密码（可选）</label>
+              <input id="syncEncryptionPasswordInput" class="settings-input" type="password" placeholder="设置后远端数据将以 AES-GCM 加密存储" autocomplete="off" />
+              <p class="settings-row-desc">设置密码后，上传到 WebDAV/Gist 的同步数据将被加密。留空则使用明文同步。所有设备需使用相同密码。</p>
+            </div>
           </section>
         </div>
       </section>
@@ -361,6 +366,8 @@
   <script src="newtab-app.js?v=20260430-modular"></script>
   <script src="newtab-utils.js?v=20260430-modular"></script>
   <script src="newtab-dialogs.js?v=20260430-modular"></script>
+  <script src="newtab-sync-network.js?v=20260728-sync-network"></script>
+  <script src="newtab-sync-transport.js?v=20260728-sync-transport"></script>
   <script src="newtab-sync.js?v=20260430-modular"></script>
   <script src="newtab-actions.js?v=20260430-modular"></script>
   <script src="newtab-render.js?v=20260430-modular"></script>

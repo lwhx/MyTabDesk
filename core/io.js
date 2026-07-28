@@ -24,6 +24,7 @@ function createBackupSafeData(data) {
 
   backupData.settings.sync.webdavPassword = "";
   backupData.settings.sync.gistToken = "";
+  backupData.settings.sync.syncEncryptionPassword = "";
   return backupData;
 }
 
@@ -63,6 +64,38 @@ function exportData(data) {
 }
 
 /**
+ * 导出用于设备同步的完整内部数据，同时移除本地敏感凭据。
+ * 与面向用户的 TabTab 兼容导出不同，本格式保留 updatedAt/deletedAt 等同步元数据。
+ *
+ * @param {object} data 当前全量数据。
+ * @returns {string} 同步 JSON 文本。
+ */
+function exportSyncData(data) {
+  return JSON.stringify({
+    format: "mytabdesk-sync",
+    version: 1,
+    data: createBackupSafeData(data)
+  });
+}
+
+/**
+ * 导入完整同步数据。
+ *
+ * @param {string} text 同步 JSON 文本。
+ * @returns {object} 标准化后的全量数据。
+ */
+function importSyncData(text) {
+  let parsedData;
+  try {
+    parsedData = JSON.parse(text);
+  } catch (error) {
+    throw new Error("同步数据不是有效的 JSON", { cause: error });
+  }
+
+  return migrateData(extractBackupData(parsedData));
+}
+
+/**
  * 从 JSON 文本导入数据。
  *
  * @param {string} text JSON 文本。
@@ -71,7 +104,7 @@ function exportData(data) {
  */
 function importData(text) {
   /** 解析后的原始数据对象。 */
-  let parsedData = null;
+  let parsedData;
 
   try {
     parsedData = JSON.parse(text);
@@ -86,6 +119,8 @@ function importData(text) {
     createBackupSafeData,
   extractBackupData,
   exportData,
+  exportSyncData,
+  importSyncData,
   importData
   };
 });

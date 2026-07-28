@@ -26,6 +26,8 @@ const {
   filterGroups,
   filterCurrentTabs,
   exportData,
+  exportSyncData,
+  importSyncData,
   importData,
   createBackupSafeData,
   reorderSpaces,
@@ -99,7 +101,9 @@ const state = {
   /** 当前页面视图模式：workspace 表示工作台，settings 表示设置页。 */
   viewMode: "workspace",
   /** 同步设置表单是否有未保存的编辑，渲染时据此避免覆盖用户输入。 */
-  settingsFormDirty: false
+  settingsFormDirty: false,
+  /** 同步操作日志，仅保存在内存中，记录最近 20 条同步操作。 */
+  syncLog: []
 };
 
 /**
@@ -209,6 +213,8 @@ root.MyTabDeskPage = {
   filterGroups,
   filterCurrentTabs,
   exportData,
+  exportSyncData,
+  importSyncData,
   importData,
   createBackupSafeData,
   reorderSpaces,

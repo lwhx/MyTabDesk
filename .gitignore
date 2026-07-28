@@ -1,6 +1,7 @@
 node_modules/
 *.log
 .superpowers/
+.hermes/
 *_backup_*.json
 mytabdesk-backup-*.json
 mytabdesk-encrypted-*.json

@@ -47,6 +47,27 @@ function createDefaultData() {
 }
 
 /**
+ * 为全墓碑数据创建一个不与现有空间 ID 冲突的活动默认空间。
+ * ID 生成规则保持确定性，避免不同设备为同一墓碑集合创建多个默认空间。
+ *
+ * @param {Array<object>} spaces 已标准化的空间列表。
+ * @returns {object} 唯一活动默认空间。
+ */
+function createUniqueDefaultSpace(spaces) {
+  const occupiedIds = new Set(spaces.map((space) => space.id));
+  let id = DEFAULT_SPACE_ID;
+  let suffix = 1;
+
+  while (occupiedIds.has(id)) {
+    id = `${DEFAULT_SPACE_ID}-${suffix}`;
+    suffix += 1;
+  }
+
+  const defaultSpace = createDefaultData().spaces[0];
+  return { ...defaultSpace, id };
+}
+
+/**
  * 标准化单个链接数据。
  *
  * @param {object} link 原始链接数据。
@@ -64,7 +85,9 @@ function normalizeLink(link) {
     createdAt: link && link.createdAt ? link.createdAt : now,
     updatedAt: link && link.updatedAt ? link.updatedAt : link && link.createdAt ? link.createdAt : now,
     // order 缺失时回落到 createdAt，保证旧数据合并排序行为与历史完全一致
-    order: link && typeof link.order === "number" ? link.order : link && link.createdAt ? link.createdAt : now
+    order: link && typeof link.order === "number" ? link.order : link && link.createdAt ? link.createdAt : now,
+    // 保留删除墓碑字段，用于跨设备同步时阻止已删除链接被旧远端数据复活
+    deletedAt: link && link.deletedAt ? link.deletedAt : undefined
   };
 }
 
@@ -87,7 +110,8 @@ function normalizeGroup(group) {
     pinned: Boolean(group && group.pinned),
     links: rawLinks.map(normalizeLink).filter((link) => Boolean(link.url)),
     createdAt: group && group.createdAt ? group.createdAt : now,
-    updatedAt: group && group.updatedAt ? group.updatedAt : now
+    updatedAt: group && group.updatedAt ? group.updatedAt : now,
+    deletedAt: group && group.deletedAt ? group.deletedAt : undefined
   };
 }
 
@@ -109,7 +133,8 @@ function normalizeSpace(space) {
     icon: space && space.icon && space.icon !== "folder" ? space.icon : getDefaultSpaceIcon(),
     groups: rawGroups.map(normalizeGroup),
     createdAt: space && space.createdAt ? space.createdAt : now,
-    updatedAt: space && space.updatedAt ? space.updatedAt : now
+    updatedAt: space && space.updatedAt ? space.updatedAt : now,
+    deletedAt: space && space.deletedAt ? space.deletedAt : undefined
   };
 }
 
@@ -130,12 +155,21 @@ function normalizeData(rawData) {
 
   /** 标准化后的空间数组。 */
   const spaces = rawData.spaces.map(normalizeSpace);
-  /** 当前激活空间是否仍然存在。 */
-  const activeSpaceExists = spaces.some((space) => space.id === rawData.activeSpaceId);
+  /** 未被删除的活动空间。 */
+  let liveSpaces = spaces.filter((space) => !space.deletedAt);
+
+  if (liveSpaces.length === 0) {
+    const defaultSpace = createUniqueDefaultSpace(spaces);
+    spaces.push(defaultSpace);
+    liveSpaces = [defaultSpace];
+  }
+
+  /** 当前激活空间是否仍然存在且未被删除。 */
+  const activeSpaceExists = liveSpaces.some((space) => space.id === rawData.activeSpaceId);
 
   return {
     version: 1,
-    activeSpaceId: activeSpaceExists ? rawData.activeSpaceId : spaces[0].id,
+    activeSpaceId: activeSpaceExists ? rawData.activeSpaceId : liveSpaces[0].id,
     spaces,
     settings: {
       theme: getPathValue(rawData, "settings.theme", "light"),
@@ -158,6 +192,7 @@ function normalizeData(rawData) {
         gistId: getPathValue(rawData, "settings.sync.gistId", DEFAULT_SYNC_SETTINGS.gistId),
         gistFilename: getPathValue(rawData, "settings.sync.gistFilename", DEFAULT_SYNC_SETTINGS.gistFilename),
         gistAutoSyncEnabled: Boolean(getPathValue(rawData, "settings.sync.gistAutoSyncEnabled", false)),
+        syncEncryptionPassword: getPathValue(rawData, "settings.sync.syncEncryptionPassword", DEFAULT_SYNC_SETTINGS.syncEncryptionPassword),
         autoSyncPendingAt: getPathValue(rawData, "settings.sync.autoSyncPendingAt", DEFAULT_SYNC_SETTINGS.autoSyncPendingAt),
         lastAutoSyncAt: getPathValue(rawData, "settings.sync.lastAutoSyncAt", DEFAULT_SYNC_SETTINGS.lastAutoSyncAt),
         lastAutoSyncError: getPathValue(rawData, "settings.sync.lastAutoSyncError", DEFAULT_SYNC_SETTINGS.lastAutoSyncError),
@@ -190,6 +225,7 @@ function migrateData(data) {
 
   return {
     createDefaultData,
+    createUniqueDefaultSpace,
   normalizeLink,
   normalizeGroup,
   normalizeSpace,

@@ -9,8 +9,23 @@
     root.MyTabDeskCoreMerge = factory(root.MyTabDeskCoreNormalize, root.MyTabDeskCoreSyncSettings);
   }
 })(typeof globalThis !== "undefined" ? globalThis : this, function (normalize, syncSettings) {
-  const { normalizeLink, normalizeGroup, normalizeSpace } = normalize;
+  const { createDefaultData, normalizeLink, normalizeGroup, normalizeSpace } = normalize;
   const { ensureSyncSettings } = syncSettings;
+
+/**
+ * 获取业务对象的有效版本时间戳。
+ * 删除时间也参与版本比较，确保墓碑不会被更旧的活动对象覆盖。
+ *
+ * @param {object} item 业务对象。
+ * @returns {number} 有效更新时间戳。
+ */
+function getEffectiveUpdatedAt(item) {
+  if (!item) {
+    return 0;
+  }
+  return Math.max(item.createdAt || 0, item.updatedAt || 0, item.deletedAt || 0);
+}
+
 /**
  * 比较两个业务对象的更新时间并返回更新的一方。
  *
@@ -20,9 +35,9 @@
  */
 function pickNewerItem(localItem, remoteItem) {
   /** 本地业务对象更新时间。 */
-  const localUpdatedAt = localItem && localItem.updatedAt ? localItem.updatedAt : localItem && localItem.createdAt ? localItem.createdAt : 0;
+  const localUpdatedAt = getEffectiveUpdatedAt(localItem);
   /** 远端业务对象更新时间。 */
-  const remoteUpdatedAt = remoteItem && remoteItem.updatedAt ? remoteItem.updatedAt : remoteItem && remoteItem.createdAt ? remoteItem.createdAt : 0;
+  const remoteUpdatedAt = getEffectiveUpdatedAt(remoteItem);
 
   return remoteUpdatedAt > localUpdatedAt ? remoteItem : localItem;
 }
@@ -43,35 +58,58 @@ function mergeLinks(localLinks, remoteLinks) {
   const normalizedLocalLinks = (Array.isArray(localLinks) ? localLinks : []).map(normalizeLink);
   /** 标准化后的远端链接列表。 */
   const normalizedRemoteLinks = (Array.isArray(remoteLinks) ? remoteLinks : []).map(normalizeLink);
-  /** 合并结果中已出现过的链接 ID 集合。 */
-  const mergedLinkIds = new Set();
-  /** 合并结果中已出现过的链接 URL 集合。 */
-  const mergedLinkUrls = new Set();
   /** 合并后的链接列表。 */
   const mergedLinks = [];
+  /** 链接 ID → mergedLinks 数组索引的映射，O(1) 查找。 */
+  const linkIndexById = new Map();
+  /** 链接 URL → mergedLinks 数组索引的映射，O(1) 查找。 */
+  const linkIndexByUrl = new Map();
+
+  /**
+   * 替换指定索引的链接，并同步刷新 ID/URL 索引。
+   *
+   * @param {number} index 链接索引。
+   * @param {object} link 替换后的链接。
+   * @returns {void}
+   */
+  const replaceMergedLink = (index, link) => {
+    const previous = mergedLinks[index];
+    if (previous && linkIndexById.get(previous.id) === index) {
+      linkIndexById.delete(previous.id);
+    }
+    if (previous && linkIndexByUrl.get(previous.url) === index) {
+      linkIndexByUrl.delete(previous.url);
+    }
+
+    mergedLinks[index] = link;
+    linkIndexById.set(link.id, index);
+    linkIndexByUrl.set(link.url, index);
+  };
+
 
   /**
    * 尝试把链接加入合并结果，按 ID 和 URL 去重，冲突时保留较新的一方。
+
    *
    * @param {object} link 待加入的链接。
    * @param {boolean} allowAppend 是否允许追加到末尾（远端独有链接才追加）。
    * @returns {void}
    */
   const addLink = (link, allowAppend) => {
-    /** 同 ID 的已合并链接索引。 */
-    const existingIndexById = mergedLinks.findIndex((item) => item.id === link.id);
 
-    if (existingIndexById >= 0) {
-      mergedLinks[existingIndexById] = pickNewerItem(mergedLinks[existingIndexById], link);
-      mergedLinkUrls.add(mergedLinks[existingIndexById].url);
+    /** 同 ID 的已合并链接索引。 */
+    const existingIndexById = linkIndexById.get(link.id);
+
+    if (existingIndexById !== undefined) {
+      replaceMergedLink(existingIndexById, pickNewerItem(mergedLinks[existingIndexById], link));
       return;
     }
 
     /** 同 URL 的已合并链接索引。 */
-    const existingIndexByUrl = mergedLinks.findIndex((item) => item.url === link.url);
+    const existingIndexByUrl = linkIndexByUrl.get(link.url);
 
-    if (existingIndexByUrl >= 0) {
-      mergedLinks[existingIndexByUrl] = pickNewerItem(mergedLinks[existingIndexByUrl], link);
+    if (existingIndexByUrl !== undefined) {
+      replaceMergedLink(existingIndexByUrl, pickNewerItem(mergedLinks[existingIndexByUrl], link));
       return;
     }
 
@@ -79,10 +117,13 @@ function mergeLinks(localLinks, remoteLinks) {
       return;
     }
 
+    /** 新链接在 mergedLinks 中的索引。 */
+    const newIndex = mergedLinks.length;
     mergedLinks.push(link);
-    mergedLinkIds.add(link.id);
-    mergedLinkUrls.add(link.url);
+    linkIndexById.set(link.id, newIndex);
+    linkIndexByUrl.set(link.url, newIndex);
   };
+
 
   // 先按本地顺序合并本地链接，保留用户在本地的拖拽顺序
   for (const link of normalizedLocalLinks) {
@@ -97,7 +138,7 @@ function mergeLinks(localLinks, remoteLinks) {
     if (!link.url) {
       continue;
     }
-    addLink(link, !mergedLinkIds.has(link.id) && !mergedLinkUrls.has(link.url));
+    addLink(link, !linkIndexById.has(link.id) && !linkIndexByUrl.has(link.url));
   }
 
   // 合并后按下标重新分配连续 order，避免两端 order 交叉错乱
@@ -140,8 +181,10 @@ function mergeGroup(localGroup, remoteGroup) {
  * @returns {Array<object>} 自动合并后的分组列表。
  */
 function mergeGroups(localGroups, remoteGroups) {
-  /** 分组 ID 的有序集合。 */
+  /** 分组 ID 的有序列表。 */
   const groupIds = [];
+  /** 已收集的分组 ID 集合，用于 O(1) 去重。 */
+  const seenGroupIds = new Set();
   /** 本地分组映射。 */
   const localGroupById = new Map();
   /** 远端分组映射。 */
@@ -154,7 +197,8 @@ function mergeGroups(localGroups, remoteGroups) {
 
     targetMap.set(group.id, group);
 
-    if (!groupIds.includes(group.id)) {
+    if (!seenGroupIds.has(group.id)) {
+      seenGroupIds.add(group.id);
       groupIds.push(group.id);
     }
   };
@@ -167,7 +211,17 @@ function mergeGroups(localGroups, remoteGroups) {
     collectGroup(group, remoteGroupById);
   }
 
-  return groupIds.map((groupId) => mergeGroup(localGroupById.get(groupId), remoteGroupById.get(groupId)));
+  return groupIds.map((groupId) => {
+    const localGroup = localGroupById.get(groupId);
+    const remoteGroup = remoteGroupById.get(groupId);
+    const newerGroup = pickNewerItem(localGroup, remoteGroup);
+
+    if (newerGroup && newerGroup.deletedAt) {
+      return normalizeGroup(newerGroup);
+    }
+
+    return mergeGroup(localGroup, remoteGroup);
+  });
 }
 
 /**
@@ -202,8 +256,10 @@ function mergeSpace(localSpace, remoteSpace) {
  * @returns {Array<object>} 自动合并后的空间列表。
  */
 function mergeSpaces(localSpaces, remoteSpaces) {
-  /** 空间 ID 的有序集合。 */
+  /** 空间 ID 的有序列表。 */
   const spaceIds = [];
+  /** 已收集的空间 ID 集合，用于 O(1) 去重。 */
+  const seenSpaceIds = new Set();
   /** 本地空间映射。 */
   const localSpaceById = new Map();
   /** 远端空间映射。 */
@@ -216,7 +272,8 @@ function mergeSpaces(localSpaces, remoteSpaces) {
 
     targetMap.set(space.id, space);
 
-    if (!spaceIds.includes(space.id)) {
+    if (!seenSpaceIds.has(space.id)) {
+      seenSpaceIds.add(space.id);
       spaceIds.push(space.id);
     }
   };
@@ -229,7 +286,17 @@ function mergeSpaces(localSpaces, remoteSpaces) {
     collectSpace(space, remoteSpaceById);
   }
 
-  return spaceIds.map((spaceId) => mergeSpace(localSpaceById.get(spaceId), remoteSpaceById.get(spaceId)));
+  return spaceIds.map((spaceId) => {
+    const localSpace = localSpaceById.get(spaceId);
+    const remoteSpace = remoteSpaceById.get(spaceId);
+    const newerSpace = pickNewerItem(localSpace, remoteSpace);
+
+    if (newerSpace && newerSpace.deletedAt) {
+      return normalizeSpace(newerSpace);
+    }
+
+    return mergeSpace(localSpace, remoteSpace);
+  });
 }
 
 /**
@@ -247,8 +314,15 @@ function mergeWorkspaceData(localData, remoteData, deviceId) {
   const normalizedRemoteData = ensureSyncSettings(remoteData, normalizedLocalData.settings.sync.deviceId);
   /** 自动合并后的空间列表。 */
   const spaces = mergeSpaces(normalizedLocalData.spaces, normalizedRemoteData.spaces);
+  /** 合并后未被删除的空间列表。 */
+  const liveSpaces = spaces.filter((space) => !space.deletedAt);
+
+  if (liveSpaces.length === 0) {
+    return ensureSyncSettings(createDefaultData(), normalizedLocalData.settings.sync.deviceId);
+  }
+
   /** 合并后仍然存在的当前激活空间 ID。 */
-  const activeSpaceId = spaces.some((space) => space.id === normalizedLocalData.activeSpaceId) ? normalizedLocalData.activeSpaceId : spaces[0].id;
+  const activeSpaceId = liveSpaces.some((space) => space.id === normalizedLocalData.activeSpaceId) ? normalizedLocalData.activeSpaceId : liveSpaces[0].id;
   /** 合并后的全量数据。 */
   const mergedData = ensureSyncSettings({
     version: Math.max(normalizedLocalData.version || 1, normalizedRemoteData.version || 1),
@@ -264,6 +338,8 @@ function mergeWorkspaceData(localData, remoteData, deviceId) {
 }
 
   return {
+    getEffectiveUpdatedAt,
+
     pickNewerItem,
   mergeLinks,
   mergeGroup,

@@ -179,8 +179,12 @@ async function xorEncrypt(plaintext, password) {
   }
 
   /** 密文的 Base64 编码。 */
-  const base64 = btoa(String.fromCharCode(...cipherBytes));
-  return base64;
+  let binary = "";
+  const chunkSize = 8192;
+  for (let i = 0; i < cipherBytes.length; i += chunkSize) {
+    binary += String.fromCharCode.apply(null, cipherBytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
 }
 
 /**
@@ -289,7 +293,7 @@ async function restoreEncryptedBackup(text, password) {
   }
 
   /** 解析后的备份对象。 */
-  let backupData = null;
+  let backupData;
 
   try {
     backupData = JSON.parse(text);
@@ -302,7 +306,7 @@ async function restoreEncryptedBackup(text, password) {
   }
 
   /** 解密后的明文 JSON。 */
-  let plainText = "";
+  let plainText;
 
   try {
     if (backupData.encryption === "PBKDF2-SHA256-AES-GCM") {
@@ -317,7 +321,7 @@ async function restoreEncryptedBackup(text, password) {
   }
 
   /** 解密后的数据对象。 */
-  let decryptedData = null;
+  let decryptedData;
 
   try {
     decryptedData = JSON.parse(plainText);
@@ -373,6 +377,10 @@ function clearAllData() {
   deriveAesKey,
   aesGcmEncrypt,
   aesGcmDecrypt,
+  /**
+   * @deprecated 仅用于生成旧版 XOR 备份测试数据，新加密统一使用 AES-GCM。
+   * 生产代码不应调用此函数。
+   */
   xorEncrypt,
   xorDecrypt,
   createEncryptedBackup,

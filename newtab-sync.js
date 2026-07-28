@@ -4,13 +4,14 @@ const { state, elements } = app;
 const {
   getCurrentTime,
   getEnabledSyncProviders,
-  isMyTabDeskGist,
-  ensureSyncSettings,
   mergeWorkspaceData,
-  exportData,
+  exportSyncData,
+  importSyncData,
   importData,
   resolveSafeWebDavFileUrl,
-  createBasicAuthHeader
+  detectImportConflict,
+  createEncryptedBackup,
+  restoreEncryptedBackup
 } = app;
 const {
   isAutoSyncEnabled,
@@ -19,53 +20,79 @@ const {
   saveData,
   withSyncLock
 } = root.MyTabDeskUtils;
-const { showAlert } = root.MyTabDeskDialogs;
+const { showAlert, showConfirm } = root.MyTabDeskDialogs;
 const notifications = root.MyTabDeskNotifications || {};
 
 /**
- * 默认重试次数。
+ * 同步日志最大保留条数。
  */
-const DEFAULT_MAX_RETRIES = 3;
+const MAX_SYNC_LOG_ENTRIES = 20;
 
 /**
- * 基础重试延迟（毫秒）。
- */
-const BASE_RETRY_DELAY = 1000;
-
-/**
- * 执行带超时和指数退避重试的网络请求。
+ * 添加一条同步日志到 state.syncLog。
  *
- * @param {string} url 请求地址。
- * @param {object} options fetch 请求选项。
- * @param {number} maxRetries 最大重试次数。
- * @returns {Promise<Response>} fetch 响应对象。
- * @throws {Error} 当请求超时或所有重试都失败时抛出错误。
+ * @param {object} entry 日志条目，包含 type、provider、spaces、links、error 等字段。
+ * @returns {void}
  */
-async function fetchWithRetry(url, options, maxRetries = DEFAULT_MAX_RETRIES) {
-  let lastError;
+function addSyncLog(entry) {
+  if (!state.syncLog) {
+    state.syncLog = [];
+  }
 
-  for (let attempt = 0; attempt <= maxRetries; attempt++) {
-    try {
-      return await fetchWithTimeout(url, options);
-    } catch (error) {
-      lastError = error;
+  state.syncLog.unshift({
+    timestamp: getCurrentTime(),
+    ...entry
+  });
 
-      // 如果已经达到最大重试次数，或者错误是用户取消（AbortError），不再重试
-      if (error.name === "AbortError" || attempt >= maxRetries) {
-        throw error;
-      }
+  if (state.syncLog.length > MAX_SYNC_LOG_ENTRIES) {
+    state.syncLog.length = MAX_SYNC_LOG_ENTRIES;
+  }
+}
 
-      // 计算指数退避延迟
-      const delay = BASE_RETRY_DELAY * Math.pow(2, attempt);
-      console.warn(`请求失败，${delay}ms 后重试 (${attempt + 1}/${maxRetries}):`, error.message);
+/**
+ * 获取最近的同步日志列表。
+ *
+ * @returns {Array<object>} 同步日志数组，最近的在前。
+ */
+function getSyncLog() {
+  return state.syncLog || [];
+}
 
-      // 等待后再重试
-      await new Promise((resolve) => setTimeout(resolve, delay));
+/**
+ * 统计可见工作台数据，墓碑项不计入用户可见数量。
+ *
+ * @param {object} data 工作台数据。
+ * @returns {{ spaces: number, groups: number, links: number }} 统计结果。
+ */
+function getWorkspaceStats(data) {
+  const spaces = data && Array.isArray(data.spaces) ? data.spaces.filter((space) => !space.deletedAt) : [];
+  let groups = 0;
+  let links = 0;
+
+  for (const space of spaces) {
+    const visibleGroups = Array.isArray(space.groups) ? space.groups.filter((group) => !group.deletedAt) : [];
+    groups += visibleGroups.length;
+
+    for (const group of visibleGroups) {
+      links += Array.isArray(group.links) ? group.links.filter((link) => !link.deletedAt).length : 0;
     }
   }
 
-  throw lastError;
+  return { spaces: spaces.length, groups, links };
 }
+
+/** 带超时和重试的同步网络客户端。 */
+const syncNetwork = root.MyTabDeskSyncNetwork.create();
+const { isRetryableStatus, fetchWithTimeout, fetchWithRetry } = syncNetwork;
+
+/** WebDAV/Gist 协议传输适配器。 */
+const syncTransport = root.MyTabDeskSyncTransport.create({
+  fetchWithTimeout,
+  fetchWithRetry,
+  resolveSafeWebDavFileUrl,
+  createBasicAuthHeader: app.createBasicAuthHeader,
+  isMyTabDeskGist: app.isMyTabDeskGist
+});
 
 /**
  * 从设置表单读取同步配置。
@@ -90,7 +117,8 @@ function readSyncSettingsForm() {
     gistToken: elements.gistTokenInput.value.trim(),
     gistId: elements.gistIdInput.value.trim(),
     gistFilename: elements.gistFilenameInput.value.trim() || "mytabdesk-sync.json",
-    gistAutoSyncEnabled: elements.gistAutoSyncSwitch.checked
+    gistAutoSyncEnabled: elements.gistAutoSyncSwitch.checked,
+    syncEncryptionPassword: elements.syncEncryptionPasswordInput ? elements.syncEncryptionPasswordInput.value : ""
   };
 }
 
@@ -143,12 +171,22 @@ async function handleSaveSyncSettings() {
 }
 
 /**
- * 创建用于云端同步的普通备份文本。
+ * 创建用于云端同步的备份文本。
  *
- * @returns {string} JSON 备份文本。
+ * 当用户设置了同步加密密码时，使用 AES-GCM 加密 payload，远端存储密文。
+ * 未设置密码时保持明文同步（向后兼容）。
+ *
+ * @returns {Promise<string>} JSON 备份文本（加密或明文）。
  */
-function createSyncPayload() {
-  return exportData(state.data);
+async function createSyncPayload() {
+  /** 当前同步配置中的加密密码。 */
+  const encryptionPassword = state.data.settings.sync.syncEncryptionPassword;
+
+  if (encryptionPassword) {
+    return createEncryptedBackup(state.data, encryptionPassword, state.data.settings.sync.deviceId);
+  }
+
+  return exportSyncData(state.data);
 }
 
 /**
@@ -159,7 +197,7 @@ function createSyncPayload() {
  */
 async function uploadAutoSync(sync) {
   /** 自动同步备份文本。 */
-  const payload = createSyncPayload();
+  const payload = await createSyncPayload();
   /** 已启用的同步服务商列表。 */
   const providers = getEnabledSyncProviders(sync);
 
@@ -183,6 +221,9 @@ async function uploadAutoSync(sync) {
 /**
  * 从当前远程服务商下载云端同步数据。
  *
+ * 自动检测远端数据格式：加密格式（encrypted: true）使用同步加密密码解密，
+ * 明文格式走标准 importData 路径（向后兼容旧数据）。
+ *
  * @param {object} sync 当前同步配置。
  * @param {string} provider 需要下载的同步服务商。
  * @returns {Promise<object|null>} 解析后的远端数据，远端不存在时返回 null。
@@ -191,6 +232,30 @@ async function downloadRemoteSyncData(sync, provider) {
   try {
     /** 云端备份文本。 */
     const payload = provider === "webdav" ? await downloadWebDav(sync) : await downloadGist(sync);
+
+    /** 尝试检测是否为加密同步数据。 */
+    let parsed;
+    try {
+      parsed = JSON.parse(payload);
+    } catch {
+      // 非 JSON，走标准导入路径
+      return importData(payload);
+    }
+
+    if (parsed && parsed.encrypted === true && parsed.payload) {
+      /** 同步加密密码。 */
+      const encryptionPassword = sync.syncEncryptionPassword;
+      if (!encryptionPassword) {
+        throw new Error("远端数据已加密，请先在同步设置中填写加密密码。");
+      }
+      return restoreEncryptedBackup(payload, encryptionPassword);
+    }
+
+    if (parsed && parsed.format === "mytabdesk-sync") {
+      return importSyncData(payload);
+    }
+
+    // 兼容升级前上传的 TabTab 明文同步数据。
     return importData(payload);
   } catch (error) {
     /** 错误消息文本。 */
@@ -230,10 +295,13 @@ function markSyncCompleted(sync, syncedAt) {
  * @returns {Promise<void>} 同步完成后结束。
  */
 async function runBidirectionalSync(sync, provider) {
+  // 每次从 state 获取最新 sync 引用，避免 both 模式下第一个 provider 更新 state.data 后
+  // 传入的 sync 参数仍指向旧对象，导致第二个 provider 使用过期的 gistId 等字段。
+  const currentSync = state.data.settings.sync;
   /** 本地同步配置副本。 */
-  const localSync = Object.assign({}, state.data.settings.sync);
+  const localSync = Object.assign({}, currentSync);
   /** 远端工作台数据。 */
-  const remoteData = await downloadRemoteSyncData(sync, provider);
+  const remoteData = await downloadRemoteSyncData(currentSync, provider);
 
   if (remoteData) {
     state.data = mergeWorkspaceData(state.data, remoteData, localSync.deviceId);
@@ -243,10 +311,10 @@ async function runBidirectionalSync(sync, provider) {
   }
 
   if (provider === "webdav") {
-    await uploadWebDav(state.data.settings.sync, createSyncPayload());
+    await uploadWebDav(state.data.settings.sync, await createSyncPayload());
   } else {
     /** 上传后返回的 Gist ID。 */
-    const gistId = await uploadGist(state.data.settings.sync, createSyncPayload());
+    const gistId = await uploadGist(state.data.settings.sync, await createSyncPayload());
     state.data.settings.sync.gistId = gistId;
 
     if (elements.gistIdInput) {
@@ -256,6 +324,18 @@ async function runBidirectionalSync(sync, provider) {
 
   markSyncCompleted(state.data.settings.sync, getCurrentTime());
   state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
+
+  /** 合并统计用于日志。 */
+  const mergedStats = getWorkspaceStats(state.data);
+
+  addSyncLog({
+    type: "auto",
+    provider,
+    merged: Boolean(remoteData),
+    spaces: mergedStats.spaces,
+    links: mergedStats.links
+  });
+
   await saveData({ skipAutoSync: true });
 }
 
@@ -366,36 +446,6 @@ function validateSyncSettings() {
   return sync;
 }
 
-/**
- * 执行带超时控制的网络请求。
- *
- * @param {string} url 请求地址。
- * @param {object} options fetch 请求选项。
- * @returns {Promise<Response>} fetch 响应对象。
- * @throws {Error} 当请求超时时抛出错误。
- */
-async function fetchWithTimeout(url, options) {
-  /** 超时控制器。 */
-  const controller = new AbortController();
-  /** 合并后的请求选项。 */
-  const requestOptions = {
-    ...options,
-    signal: controller.signal
-  };
-  /** 超时定时器。 */
-  const timeoutId = setTimeout(() => controller.abort(), 30000);
-
-  try {
-    return await fetch(url, requestOptions);
-  } catch (error) {
-    if (error.name === "AbortError") {
-      throw new Error("远程同步请求超时，请检查网络连接", { cause: error });
-    }
-    throw error;
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
 
 /**
  * 上传备份文本到 WebDAV。
@@ -406,21 +456,7 @@ async function fetchWithTimeout(url, options) {
  * @throws {Error} 当服务端返回失败状态时抛出错误。
  */
 async function uploadWebDav(sync, payload) {
-  /** 解析后的 WebDAV 同步文件地址。 */
-  const fileUrl = resolveSafeWebDavFileUrl(sync);
-  /** WebDAV 上传响应。 */
-  const response = await fetchWithRetry(fileUrl, {
-    method: "PUT",
-    headers: {
-      Authorization: createBasicAuthHeader(sync.webdavUsername, sync.webdavPassword),
-      "Content-Type": "application/json;charset=utf-8"
-    },
-    body: payload
-  });
-
-  if (!response.ok) {
-    throw new Error(`WebDAV 上传失败：${response.status}`);
-  }
+  return syncTransport.uploadWebDav(sync, payload);
 }
 
 /**
@@ -431,21 +467,7 @@ async function uploadWebDav(sync, payload) {
  * @throws {Error} 当服务端返回失败状态时抛出错误。
  */
 async function downloadWebDav(sync) {
-  /** 解析后的 WebDAV 同步文件地址。 */
-  const fileUrl = resolveSafeWebDavFileUrl(sync);
-  /** WebDAV 下载响应。 */
-  const response = await fetchWithRetry(fileUrl, {
-    method: "GET",
-    headers: {
-      Authorization: createBasicAuthHeader(sync.webdavUsername, sync.webdavPassword)
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(`WebDAV 下载失败：${response.status}`);
-  }
-
-  return response.text();
+  return syncTransport.downloadWebDav(sync);
 }
 
 /**
@@ -457,52 +479,7 @@ async function downloadWebDav(sync) {
  * @throws {Error} 当服务端返回失败状态时抛出错误。
  */
 async function uploadGist(sync, payload) {
-  /** Gist 文件名。 */
-  const filename = sync.gistFilename || "mytabdesk-sync.json";
-  /** 最终使用的 Gist ID。 */
-  let gistId = sync.gistId;
-  /** 是否为新创建的 Gist。 */
-  let isNewGist = false;
-
-  if (!gistId) {
-    /** 自动查找到的 MyTabDesk Gist。 */
-    const foundGist = await findMyTabDeskGist(sync);
-
-    if (foundGist) {
-      gistId = foundGist.id;
-    } else {
-      isNewGist = true;
-    }
-  }
-
-  /** Gist 请求地址。 */
-  const url = isNewGist ? "https://api.github.com/gists" : `https://api.github.com/gists/${gistId}`;
-  /** Gist 上传响应。 */
-  const response = await fetchWithRetry(url, {
-    method: isNewGist ? "POST" : "PATCH",
-    headers: {
-      Authorization: `Bearer ${sync.gistToken}`,
-      Accept: "application/vnd.github+json",
-      "Content-Type": "application/json;charset=utf-8"
-    },
-    body: JSON.stringify({
-      description: isNewGist ? "MyTabDesk Sync" : undefined,
-      public: false,
-      files: {
-        [filename]: {
-          content: payload
-        }
-      }
-    })
-  });
-
-  if (!response.ok) {
-    throw new Error(`GitHub Gist 上传失败：${response.status}`);
-  }
-
-  /** Gist 响应数据。 */
-  const result = await response.json();
-  return result.id || gistId;
+  return syncTransport.uploadGist(sync, payload);
 }
 
 /**
@@ -513,57 +490,9 @@ async function uploadGist(sync, payload) {
  * @returns {Promise<object|null>} 找到的 Gist 摘要对象，未找到时返回 null。
  */
 async function findMyTabDeskGist(sync) {
-  /** 同步文件名。 */
-  const filename = sync.gistFilename || "mytabdesk-sync.json";
-  /** 当前请求的 Gist 列表地址，从第一页开始。 */
-  let url = "https://api.github.com/gists?per_page=100";
-  /** 最大翻页次数，防止异常情况下无限循环。 */
-  const maxPages = 10;
-
-  for (let page = 0; page < maxPages && url; page += 1) {
-    /** Gist 列表响应。 */
-    const response = await fetchWithRetry(url, {
-      method: "GET",
-      headers: {
-        Authorization: `Bearer ${sync.gistToken}`,
-        Accept: "application/vnd.github+json"
-      }
-    });
-
-    if (!response.ok) {
-      throw new Error(`GitHub Gist 列表获取失败：${response.status}`);
-    }
-
-    /** 当前页的 Gist 列表数据。 */
-    const gists = await response.json();
-
-    for (const gist of gists) {
-      if (isMyTabDeskGist(gist, filename)) {
-        return gist;
-      }
-    }
-
-    // 解析 Link 头中的下一页地址，没有则结束翻页
-    url = getNextPageUrl(response);
-  }
-
-  return null;
+  return syncTransport.findMyTabDeskGist(sync);
 }
 
-/**
- * 从响应 Link 头中提取下一页地址。
- *
- * @param {Response} response fetch 响应。
- * @returns {string} 下一页地址，没有更多页时返回空字符串。
- */
-function getNextPageUrl(response) {
-  /** Link 响应头文本。 */
-  const linkHeader = response.headers.get("Link") || "";
-  /** Link 头中 rel="next" 的匹配项。 */
-  const match = linkHeader.match(/<([^>]+)>;\s*rel="next"/);
-
-  return match ? match[1] : "";
-}
 
 /**
  * 从 GitHub Gist 下载备份文本。
@@ -573,45 +502,7 @@ function getNextPageUrl(response) {
  * @throws {Error} 当服务端返回失败状态时抛出错误。
  */
 async function downloadGist(sync) {
-  /** 最终使用的 Gist ID。 */
-  let gistId = sync.gistId;
-
-  if (!gistId) {
-    /** 自动查找到的 MyTabDesk Gist。 */
-    const foundGist = await findMyTabDeskGist(sync);
-
-    if (!foundGist) {
-      throw new Error("未找到指定同步文件，请先上传一次自动创建 Gist。");
-    }
-
-    gistId = foundGist.id;
-  }
-
-  /** Gist 下载响应。 */
-  const response = await fetchWithRetry(`https://api.github.com/gists/${gistId}`, {
-    method: "GET",
-    headers: {
-      Authorization: `Bearer ${sync.gistToken}`,
-      Accept: "application/vnd.github+json"
-    }
-  });
-
-  if (!response.ok) {
-    throw new Error(`GitHub Gist 下载失败：${response.status}`);
-  }
-
-  /** Gist 响应数据。 */
-  const result = await response.json();
-  /** Gist 文件名。 */
-  const filename = sync.gistFilename || "mytabdesk-sync.json";
-  /** 目标 Gist 文件。 */
-  const file = result.files && result.files[filename] ? result.files[filename] : null;
-
-  if (!file || typeof file.content !== "string") {
-    throw new Error("Gist 中未找到指定同步文件。");
-  }
-
-  return file.content;
+  return syncTransport.downloadGist(sync);
 }
 
 /**
@@ -669,7 +560,7 @@ async function uploadManualSync(provider) {
       const sync = state.data.settings.sync;
       validateSyncProviderSettings(sync, provider);
       /** 同步备份文本。 */
-      const payload = createSyncPayload();
+      const payload = await createSyncPayload();
 
       if (provider === "webdav") {
         await uploadWebDav(sync, payload);
@@ -685,6 +576,15 @@ async function uploadManualSync(provider) {
       state.data.settings.sync.autoSyncPendingAt = 0;
       state.data.settings.sync.lastAutoSyncAt = state.data.settings.sync.lastSyncAt;
       state.data.settings.sync.lastAutoSyncError = "";
+
+      const uploadStats = getWorkspaceStats(state.data);
+      addSyncLog({
+        type: "manual-upload",
+        provider,
+        spaces: uploadStats.spaces,
+        links: uploadStats.links
+      });
+
       await saveData({ skipAutoSync: true });
       root.MyTabDeskRender.renderSettingsStatus();
       await showAlert("已上传到云端。");
@@ -706,11 +606,14 @@ async function uploadManualSync(provider) {
 }
 
 /**
- * 从云端下载数据并导入本地。
- * 通过 withSyncLock 串行化，避免下载覆盖 state.data 时与其它同步操作竞争。
+ * 从云端下载数据并合并到本地。
+ * 通过 withSyncLock 串行化，避免下载合并 state.data 时与其它同步操作竞争。
+ *
+ * 与自动同步 runBidirectionalSync 保持一致，采用 mergeWorkspaceData 合并策略，
+ * 而非直接覆盖本地数据。冲突检测提示保留作为额外安全层。
  *
  * @param {string} provider 同步服务商。
- * @returns {Promise<void>} 下载导入完成后结束。
+ * @returns {Promise<void>} 下载合并完成后结束。
  */
 async function downloadManualSync(provider) {
   return withSyncButtonLoading(getSyncButton(provider, "download"), async () => withSyncLock(async () => {
@@ -729,9 +632,25 @@ async function downloadManualSync(provider) {
         return;
       }
 
-      /** 本地同步配置副本，用于在覆盖后保留连接信息。 */
+      /** 冲突检测：本地比远端新或来自不同设备时，提示用户确认。 */
+      const conflict = detectImportConflict(state.data, remoteData);
+      if (conflict.requiresConfirm) {
+        /** 冲突提示文案。 */
+        const conflictMessage = conflict.isOlder
+          ? "云端数据比本地旧，合并后本地较新的修改会保留。继续合并吗？"
+          : "即将与另一台设备的数据合并，两端的修改都会保留。继续吗？";
+        const confirmed = await showConfirm(conflictMessage);
+        if (!confirmed) {
+          return;
+        }
+      }
+
+      /** 本地同步配置副本，用于在合并后保留连接信息。 */
       const localSyncSettings = { ...state.data.settings.sync };
-      state.data = ensureSyncSettings(remoteData, localSyncSettings.deviceId);
+      /** 合并前本地空间/分组/链接统计，用于同步日志。 */
+      const localStats = getWorkspaceStats(state.data);
+
+      state.data = mergeWorkspaceData(state.data, remoteData, localSyncSettings.deviceId);
       state.data.settings.sync = {
         ...localSyncSettings,
         lastImportAt: getCurrentTime(),
@@ -740,12 +659,22 @@ async function downloadManualSync(provider) {
       state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
       state.viewMode = "workspace";
 
+      /** 合并后空间/链接统计。 */
+      const mergedStats = getWorkspaceStats(state.data);
+
+      addSyncLog({
+        type: "manual-download",
+        provider,
+        spaces: { before: localStats.spaces, after: mergedStats.spaces },
+        links: { before: localStats.links, after: mergedStats.links }
+      });
+
       await saveData({ skipAutoSync: true });
       root.MyTabDeskRender.renderAll();
       if (notifications.notifySuccess) {
-        notifications.notifySuccess("下载成功", "已用云端数据覆盖本地");
+        notifications.notifySuccess("下载成功", "已合并云端数据到本地");
       }
-      await showAlert("已用云端数据覆盖本地。");
+      await showAlert("已合并云端数据到本地。");
     } catch (error) {
       if (notifications.notifyError) {
         notifications.notifyError("下载失败", error.message || "从云端下载失败");
@@ -776,12 +705,16 @@ root.MyTabDeskSync = {
   validateSyncSettings,
   fetchWithTimeout,
   fetchWithRetry,
+  isRetryableStatus,
   uploadWebDav,
   downloadWebDav,
   uploadGist,
   findMyTabDeskGist,
   downloadGist,
   uploadManualSync,
-  downloadManualSync
+  downloadManualSync,
+  addSyncLog,
+  getSyncLog,
+  getWorkspaceStats
 };
 })(globalThis);

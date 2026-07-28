@@ -75,7 +75,9 @@ function createBasicAuthHeader(username, password) {
     return `Basic ${Buffer.from(credentialText, "utf8").toString("base64")}`;
   }
 
-  return `Basic ${btoa(unescape(encodeURIComponent(credentialText)))}`;
+  const credentialBytes = new TextEncoder().encode(credentialText);
+  const binary = String.fromCharCode(...credentialBytes);
+  return `Basic ${btoa(binary)}`;
 }
 
 /**
@@ -169,6 +171,7 @@ function ensureSyncSettings(data, deviceId) {
     gistId: nextData.settings.sync.gistId || DEFAULT_SYNC_SETTINGS.gistId,
     gistFilename: nextData.settings.sync.gistFilename || DEFAULT_SYNC_SETTINGS.gistFilename,
     gistAutoSyncEnabled: Boolean(nextData.settings.sync.gistAutoSyncEnabled),
+    syncEncryptionPassword: nextData.settings.sync.syncEncryptionPassword || DEFAULT_SYNC_SETTINGS.syncEncryptionPassword,
     autoSyncPendingAt: typeof nextData.settings.sync.autoSyncPendingAt === "number" ? nextData.settings.sync.autoSyncPendingAt : DEFAULT_SYNC_SETTINGS.autoSyncPendingAt,
     lastAutoSyncAt: typeof nextData.settings.sync.lastAutoSyncAt === "number" ? nextData.settings.sync.lastAutoSyncAt : DEFAULT_SYNC_SETTINGS.lastAutoSyncAt,
     lastAutoSyncError: nextData.settings.sync.lastAutoSyncError || DEFAULT_SYNC_SETTINGS.lastAutoSyncError,
@@ -179,7 +182,8 @@ function ensureSyncSettings(data, deviceId) {
 }
 
 /**
- * 获取全量数据中最近的更新时间，取所有空间和分组 updatedAt 的最大值。
+ * 获取全量数据中最近的版本时间，包含空间、分组、链接的更新和删除时间。
+ * 不使用 createdAt，避免迁移时补齐的创建时间被误判为真实业务更新。
  *
  * @param {object} data 当前全量数据。
  * @returns {number} 最近的更新时间戳，无数据时返回 0。
@@ -189,18 +193,31 @@ function getDataUpdatedAt(data) {
     return 0;
   }
 
-  /** 所有空间和分组的更新时间集合。 */
+  /** 所有业务对象的版本时间集合。 */
   const timestamps = [];
 
-  for (const space of data.spaces) {
-    if (space.updatedAt) {
-      timestamps.push(space.updatedAt);
+  const collectItemTimestamps = (item) => {
+    if (!item) {
+      return;
     }
+    for (const key of ["updatedAt", "deletedAt"]) {
+      if (typeof item[key] === "number") {
+        timestamps.push(item[key]);
+      }
+    }
+  };
+
+  for (const space of data.spaces) {
+    collectItemTimestamps(space);
 
     if (Array.isArray(space.groups)) {
       for (const group of space.groups) {
-        if (group.updatedAt) {
-          timestamps.push(group.updatedAt);
+        collectItemTimestamps(group);
+
+        if (Array.isArray(group.links)) {
+          for (const link of group.links) {
+            collectItemTimestamps(link);
+          }
         }
       }
     }

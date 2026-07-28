@@ -50,7 +50,12 @@ async function createBlankSpaceFromMenu() {
  */
 async function persistWithDirty(options) {
   markDirty();
-  await saveData(options);
+  try {
+    await saveData(options);
+  } catch (error) {
+    await showAlert(error.message || "数据保存失败，请稍后重试。");
+    throw error;
+  }
 }
 
 /**
@@ -61,7 +66,12 @@ async function persistWithDirty(options) {
  */
 async function persistWithDirtySkipSync(options) {
   markDirty();
-  await saveData({ ...(options || {}), skipAutoSync: true });
+  try {
+    await saveData({ ...(options || {}), skipAutoSync: true });
+  } catch (error) {
+    await showAlert(error.message || "数据保存失败，请稍后重试。");
+    throw error;
+  }
 }
 
 function createDefaultInboxGroup() {
@@ -83,8 +93,9 @@ function ensureActiveSpaceHasGroup(activeSpace) {
     return null;
   }
 
-  if (activeSpace.groups.length > 0) {
-    return activeSpace.groups[0];
+  const liveGroup = activeSpace.groups.find((group) => !group.deletedAt);
+  if (liveGroup) {
+    return liveGroup;
   }
 
   const group = createDefaultInboxGroup();
@@ -176,6 +187,12 @@ async function deleteSpace(spaceId) {
     return;
   }
 
+  const liveSpacesBefore = state.data.spaces.filter((s) => !s.deletedAt);
+  if (liveSpacesBefore.length <= 1) {
+    await showAlert("至少需要保留一个空间。");
+    return;
+  }
+
   /** 用户删除确认结果。 */
   const confirmed = await showConfirm(`确定删除空间「${space.name}」吗？该空间下的所有分组和链接都会被删除。`);
 
@@ -184,9 +201,13 @@ async function deleteSpace(spaceId) {
   }
 
   state.data.spaces = state.data.spaces.filter((item) => item.id !== spaceId);
+  // 写入删除墓碑，用于跨设备同步时阻止已删除空间被旧远端数据复活
+  state.data.spaces.push({ ...space, deletedAt: getCurrentTime(), updatedAt: getCurrentTime() });
 
   if (state.data.activeSpaceId === spaceId) {
-    state.data.activeSpaceId = state.data.spaces[0].id;
+    // 激活第一个非墓碑空间
+    const liveSpaces = state.data.spaces.filter((s) => !s.deletedAt);
+    state.data.activeSpaceId = liveSpaces[0].id;
   }
 
   state.openSpaceMenuId = "";
@@ -258,6 +279,8 @@ async function deleteGroup(groupId) {
   }
 
   activeSpace.groups = activeSpace.groups.filter((item) => item.id !== groupId);
+  // 写入删除墓碑，用于跨设备同步时阻止已删除分组被旧远端数据复活
+  activeSpace.groups.push({ ...group, deletedAt: getCurrentTime(), updatedAt: getCurrentTime() });
   activeSpace.updatedAt = getCurrentTime();
 
   await persistWithDirty();
@@ -596,12 +619,15 @@ async function deleteLink(groupId, linkId) {
   }
 
   group.links = group.links.filter((item) => item.id !== linkId);
+  // 写入删除墓碑，用于跨设备同步时阻止已删除链接被旧远端数据复活
+  group.links.push({ ...link, deletedAt: getCurrentTime(), updatedAt: getCurrentTime() });
   group.updatedAt = getCurrentTime();
   activeSpace.updatedAt = getCurrentTime();
   state.selectedLinkIds.delete(linkId);
   await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
+
 
 /**
  * 打开链接。
@@ -709,14 +735,16 @@ async function saveCurrentTabsToGroup() {
   }
 
   ensureActiveSpaceHasGroup(activeSpace);
+  /** 当前空间中未被删除的可用分组列表。 */
+  const liveGroups = activeSpace.groups.filter((group) => !group.deletedAt);
 
-  if (!Array.isArray(activeSpace.groups) || activeSpace.groups.length === 0) {
+  if (liveGroups.length === 0) {
     await showAlert("请先创建一个分组，再保存当前窗口标签。", "无法保存");
     return;
   }
 
   /** 当前空间中可选择的分组列表。 */
-  const groupNames = activeSpace.groups.map((group, index) => `${index + 1}. ${group.name}`);
+  const groupNames = liveGroups.map((group, index) => `${index + 1}. ${group.name}`);
   /** 用户输入的分组序号。 */
   const answer = await showPrompt(`请选择保存到哪个分组：\n${groupNames.join("\n")}`, "1", "保存当前窗口标签");
 
@@ -727,7 +755,7 @@ async function saveCurrentTabsToGroup() {
   /** 用户输入对应的分组序号。 */
   const index = Number(answer) - 1;
   /** 目标分组。 */
-  const targetGroup = activeSpace.groups[index];
+  const targetGroup = liveGroups[index];
 
   if (!targetGroup) {
     await showAlert("请输入有效的分组序号。", "无法保存");
@@ -755,14 +783,16 @@ async function saveSingleTabToGroup(tab) {
   }
 
   ensureActiveSpaceHasGroup(activeSpace);
+  /** 当前空间中未被删除的可用分组列表。 */
+  const liveGroups = activeSpace.groups.filter((group) => !group.deletedAt);
 
-  if (!Array.isArray(activeSpace.groups) || activeSpace.groups.length === 0) {
+  if (liveGroups.length === 0) {
     await showAlert("请先创建一个分组，再保存当前标签。", "无法保存");
     return;
   }
 
   /** 当前空间中可选择的分组列表。 */
-  const groupNames = activeSpace.groups.map((group, index) => `${index + 1}. ${group.name}`);
+  const groupNames = liveGroups.map((group, index) => `${index + 1}. ${group.name}`);
   /** 用户输入的分组序号。 */
   const answer = await showPrompt(`请选择保存到哪个分组：\n${groupNames.join("\n")}`, "1", "保存当前标签");
 
@@ -773,7 +803,7 @@ async function saveSingleTabToGroup(tab) {
   /** 用户输入对应的分组序号。 */
   const index = Number(answer) - 1;
   /** 目标分组。 */
-  const targetGroup = activeSpace.groups[index];
+  const targetGroup = liveGroups[index];
 
   if (!targetGroup) {
     await showAlert("请输入有效的分组序号。", "无法保存");
@@ -958,7 +988,7 @@ async function importSelectedFile(event) {
  */
 async function importSpaceFromText(text) {
   /** 解析后的空间导入包。 */
-  let parsedData = null;
+  let parsedData;
 
   try {
     parsedData = JSON.parse(text);
@@ -1023,7 +1053,21 @@ async function clearData() {
     return;
   }
 
-  state.data = clearAllData();
+  const clearedData = clearAllData();
+  const clearedAt = getCurrentTime();
+  const freshSpace = clearedData.spaces[0];
+  // 清空工作台内容不应清除本地同步连接配置，否则删除墓碑无法继续上传。
+  clearedData.settings = state.data.settings;
+  freshSpace.id = createId("space");
+  freshSpace.createdAt = clearedAt;
+  freshSpace.updatedAt = clearedAt;
+  clearedData.activeSpaceId = freshSpace.id;
+  clearedData.spaces.push(...state.data.spaces.map((space) => ({
+    ...space,
+    deletedAt: clearedAt,
+    updatedAt: clearedAt
+  })));
+  state.data = clearedData;
   state.selectedLinkIds.clear();
   state.batchDeleteEnabled = false;
   await persistWithDirty();
@@ -1125,13 +1169,16 @@ async function confirmBatchDelete() {
 
   /** 当前激活空间。 */
   const activeSpace = getActiveSpace();
+  const deletedAt = getCurrentTime();
 
   for (const group of activeSpace.groups) {
-    group.links = group.links.filter((link) => !state.selectedLinkIds.has(link.id));
-    group.updatedAt = getCurrentTime();
+    group.links = group.links.map((link) => state.selectedLinkIds.has(link.id)
+      ? { ...link, deletedAt, updatedAt: deletedAt }
+      : link);
+    group.updatedAt = deletedAt;
   }
 
-  activeSpace.updatedAt = getCurrentTime();
+  activeSpace.updatedAt = deletedAt;
   state.selectedLinkIds.clear();
   state.batchDeleteEnabled = false;
   await persistWithDirty();
@@ -1415,14 +1462,12 @@ async function addExternalLink(externalData) {
     return;
   }
 
-  ensureActiveSpaceHasGroup(activeSpace);
+  /** 目标分组，默认为第一个可用分组。 */
+  const targetGroup = ensureActiveSpaceHasGroup(activeSpace);
 
-  if (!Array.isArray(activeSpace.groups) || activeSpace.groups.length === 0) {
+  if (!targetGroup) {
     return;
   }
-
-  /** 目标分组，默认为第一个分组。 */
-  const targetGroup = activeSpace.groups[0];
 
   /** 链接数据。 */
   const linkData = {

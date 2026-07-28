@@ -28,7 +28,7 @@ function isValidTabUrl(url) {
     /** 解析后的标准 URL 对象。 */
     const parsedUrl = new URL(normalizedUrl);
     return parsedUrl.protocol === "http:" || parsedUrl.protocol === "https:";
-  } catch (error) {
+  } catch {
     return false;
   }
 }

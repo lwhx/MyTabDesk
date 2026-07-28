@@ -21,6 +21,9 @@ let workspaceDirty = false;
  */
 let syncLockChain = Promise.resolve();
 
+/** 当前页面内的存储写入串行链；不支持 Web Locks 时作为回退。 */
+let storageLockChain = Promise.resolve();
+
 /**
  * 标记工作台数据已变更，后续 hasWorkspaceDataChanged 调用时会返回 true。
  *
@@ -45,6 +48,22 @@ function withSyncLock(fn) {
     () => undefined,
     () => undefined
   );
+  return nextChain;
+}
+
+/**
+ * 跨工作台页面串行执行本地存储读-合并-写事务。
+ *
+ * @param {Function} fn 需要加锁执行的异步函数。
+ * @returns {Promise<*>} fn 的返回值。
+ */
+function withStorageLock(fn) {
+  if (typeof navigator !== "undefined" && navigator.locks && typeof navigator.locks.request === "function") {
+    return navigator.locks.request("mytabdesk-storage-write", fn);
+  }
+
+  const nextChain = storageLockChain.then(fn, fn);
+  storageLockChain = nextChain.then(() => undefined, () => undefined);
   return nextChain;
 }
 
@@ -160,7 +179,7 @@ function isSafeFaviconUrl(url) {
     const hasSafePath = safePaths.some((safe) => path.includes(safe));
 
     return hasImageExtension || hasSafePath || parsed.hostname.includes("favicon");
-  } catch (error) {
+  } catch {
     return false;
   }
 }
@@ -234,10 +253,13 @@ async function loadData() {
   try {
     /** Chrome 本地存储读取结果。 */
     const result = await chrome.storage.local.get(STORAGE_KEY);
+    if (!result[STORAGE_KEY]) {
+      return createDefaultData();
+    }
     return migrateData(result[STORAGE_KEY]);
   } catch (error) {
-    await root.MyTabDeskDialogs.showAlert("数据读取失败，已为你恢复默认数据。");
-    return createDefaultData();
+    console.error("数据读取失败:", error);
+    throw new Error("数据读取失败，请尝试重新打开页面。如问题持续，可在扩展管理页导出诊断信息。", { cause: error });
   }
 }
 
@@ -270,11 +292,25 @@ async function saveData(options = {}) {
   }
 
   try {
-    await chrome.storage.local.set({
-      [STORAGE_KEY]: state.data
+    await withStorageLock(async () => {
+      // 多页面保护：写入前始终合并当前存储快照。
+      // 不能只比较最新时间，因为另一个页面较早但独立的修改也可能不在当前快照中。
+      if (state.data) {
+        const stored = await chrome.storage.local.get(STORAGE_KEY);
+        const storedData = stored[STORAGE_KEY];
+        if (storedData) {
+          state.data = root.MyTabDeskPage.mergeWorkspaceData(state.data, storedData, state.data.settings.sync.deviceId);
+        }
+      }
+
+      await chrome.storage.local.set({
+        [STORAGE_KEY]: state.data
+      });
     });
   } catch (error) {
-    await root.MyTabDeskDialogs.showAlert("数据保存失败，请稍后重试。");
+    console.error("数据保存失败:", error);
+    // 向上传播错误，让调用方决定如何提示用户和恢复状态
+    throw new Error("数据保存失败，请稍后重试。", { cause: error });
   }
 
   if (workspaceChanged) {
@@ -292,7 +328,9 @@ function getActiveSpace() {
     return null;
   }
 
-  return state.data.spaces.find((space) => space.id === state.data.activeSpaceId) || state.data.spaces[0] || null;
+  return state.data.spaces.find((space) => space.id === state.data.activeSpaceId && !space.deletedAt)
+    || state.data.spaces.find((space) => !space.deletedAt)
+    || null;
 }
 
 /**
@@ -329,20 +367,26 @@ function getTotalLinks(space) {
     return 0;
   }
 
-  return space.groups.reduce((total, group) => total + group.links.length, 0);
+  return space.groups.reduce((total, group) => {
+    if (group.deletedAt || !Array.isArray(group.links)) {
+      return total;
+    }
+    return total + group.links.filter((link) => !link.deletedAt).length;
+  }, 0);
 }
 
 /**
  * 统计全部工作台数据的空间、分组和链接数量。
+ * 不计入带有 deletedAt 墓碑标记的已删除项。
  *
  * @param {object} data 工作台全量数据。
  * @returns {object} 统计结果对象。
  */
 function getDataSummary(data) {
-  /** 全部空间列表。 */
-  const spaces = data && Array.isArray(data.spaces) ? data.spaces : [];
-  /** 全部分组数量。 */
-  const groupCount = spaces.reduce((total, space) => total + (Array.isArray(space.groups) ? space.groups.length : 0), 0);
+  /** 全部空间列表（不含墓碑）。 */
+  const spaces = data && Array.isArray(data.spaces) ? data.spaces.filter((s) => !s.deletedAt) : [];
+  /** 全部分组数量（不含墓碑）。 */
+  const groupCount = spaces.reduce((total, space) => total + (Array.isArray(space.groups) ? space.groups.filter((g) => !g.deletedAt).length : 0), 0);
   /** 全部链接数量。 */
   const linkCount = spaces.reduce((total, space) => total + getTotalLinks(space), 0);
 
@@ -398,7 +442,7 @@ function getChromeFaviconUrl(pageUrl) {
     }
 
     return `chrome-extension://${chrome.runtime.id}/_favicon/?pageUrl=${encodeURIComponent(parsed.href)}&size=32`;
-  } catch (error) {
+  } catch {
     return "";
   }
 }
@@ -416,7 +460,7 @@ function extractDomain(url) {
 
   try {
     return new URL(url.trim()).hostname.replace(/^www\./, "");
-  } catch (error) {
+  } catch {
     return "";
   }
 }
@@ -439,7 +483,7 @@ function getCravatarFaviconUrl(pageUrl) {
       return "";
     }
     return `https://cn.cravatar.com/favicon/api/index.php?url=${encodeURIComponent(parsed.hostname)}&size=32`;
-  } catch (error) {
+  } catch {
     return "";
   }
 }
@@ -462,7 +506,7 @@ function getGoogleFaviconUrl(pageUrl) {
       return "";
     }
     return `https://www.google.com/s2/favicons?domain=${encodeURIComponent(parsed.hostname)}&sz=32`;
-  } catch (error) {
+  } catch {
     return "";
   }
 }
@@ -579,6 +623,7 @@ root.MyTabDeskUtils = {
   markDirty,
   isSafeFaviconUrl,
   withSyncLock,
+  withStorageLock,
   debounce,
   extractDomain
 };

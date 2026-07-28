@@ -29,12 +29,15 @@ const {
   isMyTabDeskGist,
   ensureSyncSettings,
   getDataUpdatedAt,
+  mergeLinks,
   mergeWorkspaceData,
   createEncryptedBackup,
   restoreEncryptedBackup,
   xorEncrypt,
   detectImportConflict,
   exportData,
+  exportSyncData,
+  importSyncData,
   importData,
   createBackupSafeData,
   moveArrayItem,
@@ -586,6 +589,107 @@ function testGetDataUpdatedAtReturnsLatestTimestamp() {
 }
 
 /**
+ * 测试全量数据更新时间包含链接更新和删除墓碑。
+ *
+ * @returns {void}
+ */
+function testGetDataUpdatedAtIncludesLinksAndTombstones() {
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [{
+      id: "space-a",
+      name: "空间 A",
+      updatedAt: 100,
+      groups: [{
+        id: "group-a",
+        name: "分组 A",
+        updatedAt: 200,
+        links: [{
+          id: "link-a",
+          title: "已删除链接",
+          url: "https://example.com",
+          updatedAt: 300,
+          deletedAt: 400
+        }]
+      }]
+    }],
+    settings: {}
+  });
+
+  assert.equal(getDataUpdatedAt(data), 400);
+}
+
+/**
+ * 测试全墓碑空间标准化时保留删除历史，并创建唯一活动空间。
+ *
+ * @returns {void}
+ */
+function testNormalizeDataPreservesAllSpaceTombstones() {
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "default-space",
+    spaces: [
+      { id: "default-space", name: "已删除默认空间", deletedAt: 300, updatedAt: 300, groups: [] },
+      { id: "deleted-space", name: "已删除空间", deletedAt: 400, updatedAt: 400, groups: [] }
+    ],
+    settings: {}
+  });
+
+  const tombstones = data.spaces.filter((space) => space.deletedAt);
+  const liveSpaces = data.spaces.filter((space) => !space.deletedAt);
+  assert.equal(tombstones.length, 2);
+  assert.equal(liveSpaces.length, 1);
+  assert.notEqual(liveSpaces[0].id, "default-space");
+  assert.equal(data.activeSpaceId, liveSpaces[0].id);
+}
+
+/**
+ * 测试全墓碑空间合并时保留删除历史，并追加活动空间。
+ *
+ * @returns {void}
+ */
+function testMergePreservesAllSpaceTombstones() {
+  const local = {
+    version: 1,
+    activeSpaceId: "default-space",
+    spaces: [{ id: "default-space", name: "已删除", deletedAt: 500, updatedAt: 500, groups: [] }],
+    settings: {}
+  };
+  const remote = {
+    version: 1,
+    activeSpaceId: "default-space",
+    spaces: [{ id: "default-space", name: "旧空间", updatedAt: 100, groups: [] }],
+    settings: {}
+  };
+
+  const merged = mergeWorkspaceData(local, remote, "device-a");
+  assert.equal(merged.spaces.some((space) => space.id === "default-space" && space.deletedAt === 500), true);
+  const liveSpaces = merged.spaces.filter((space) => !space.deletedAt);
+  assert.equal(liveSpaces.length, 1);
+  assert.notEqual(liveSpaces[0].id, "default-space");
+}
+
+/**
+ * 测试标准化数据时不会把墓碑空间作为当前激活空间。
+ *
+ * @returns {void}
+ */
+function testNormalizeDataSkipsDeletedActiveSpace() {
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "deleted-space",
+    spaces: [
+      { id: "deleted-space", name: "已删除", deletedAt: 300, groups: [] },
+      { id: "live-space", name: "可用空间", groups: [] }
+    ],
+    settings: {}
+  });
+
+  assert.equal(data.activeSpaceId, "live-space");
+}
+
+/**
  * 测试加密备份会隐藏原始链接内容并可通过密码恢复。
  *
  * @returns {void}
@@ -855,6 +959,54 @@ function testCreateBackupSafeDataRemovesSecrets() {
 
   assert.equal(data.settings.sync.webdavPassword, "");
   assert.equal(data.settings.sync.gistToken, "");
+}
+
+/**
+ * 测试同步格式保留版本/墓碑元数据且移除本地凭据。
+ *
+ * @returns {void}
+ */
+function testSyncDataRoundTripPreservesTombstonesWithoutSecrets() {
+  const originalData = normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [{
+      id: "space-a",
+      name: "空间 A",
+      updatedAt: 300,
+      groups: [{
+        id: "group-a",
+        name: "分组 A",
+        updatedAt: 300,
+        links: [{
+          id: "link-a",
+          title: "已删除链接",
+          url: "https://example.com",
+          createdAt: 100,
+          updatedAt: 200,
+          deletedAt: 300
+        }]
+      }]
+    }],
+    settings: {
+      sync: {
+        webdavPassword: "secret-webdav",
+        gistToken: "secret-gist",
+        syncEncryptionPassword: "secret-encryption"
+      }
+    }
+  });
+
+  const text = exportSyncData(originalData);
+  const restored = importSyncData(text);
+  const link = restored.spaces[0].groups[0].links[0];
+
+  assert.equal(link.createdAt, 100);
+  assert.equal(link.updatedAt, 200);
+  assert.equal(link.deletedAt, 300);
+  assert.equal(text.includes("secret-webdav"), false);
+  assert.equal(text.includes("secret-gist"), false);
+  assert.equal(text.includes("secret-encryption"), false);
 }
 
 /**
@@ -1652,6 +1804,26 @@ function testMergeWorkspaceDataKeepsLocalOrderWithRemoteAppended() {
 }
 
 /**
+ * 测试同 ID 链接更新 URL 后，旧 URL 可由另一条链接继续使用。
+ *
+ * @returns {void}
+ */
+function testMergeLinksRefreshesIndexesAfterUrlChange() {
+  const localLinks = [
+    { id: "link-a", title: "A", url: "https://old.example.com", createdAt: 1, updatedAt: 100 }
+  ];
+  const remoteLinks = [
+    { id: "link-a", title: "A new", url: "https://new.example.com", createdAt: 1, updatedAt: 300 },
+    { id: "link-b", title: "B", url: "https://old.example.com", createdAt: 200, updatedAt: 200 }
+  ];
+
+  const merged = mergeLinks(localLinks, remoteLinks);
+
+  assert.deepEqual(merged.map((link) => link.id), ["link-a", "link-b"]);
+  assert.deepEqual(merged.map((link) => link.url), ["https://new.example.com", "https://old.example.com"]);
+}
+
+/**
  * 测试清空数据会返回默认工作台数据。
  *
  * @returns {void}
@@ -1734,7 +1906,49 @@ function testFindLinkLocatesLink() {
 }
 
 /**
- * 测试 addLinksToGroup 会跳过无效链接。
+ * 测试删除后的同 URL 可作为新链接重新添加，墓碑仍保留用于同步。
+ *
+ * @returns {void}
+ */
+function testAddLinksToGroupAllowsUrlAfterTombstone() {
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [{
+      id: "space-a",
+      name: "空间 A",
+      groups: [{
+        id: "group-a",
+        name: "分组 A",
+        links: [{
+          id: "deleted-link",
+          title: "已删除",
+          url: "https://same.example",
+          createdAt: 100,
+          updatedAt: 200,
+          deletedAt: 300
+        }]
+      }]
+    }],
+    settings: {}
+  });
+
+  const updated = addLinksToGroup(data, "space-a", "group-a", [{
+    id: "new-link",
+    title: "重新添加",
+    url: "https://same.example",
+    createdAt: 400,
+    updatedAt: 400
+  }]);
+  const links = updated.spaces[0].groups[0].links;
+
+  assert.equal(links.length, 2);
+  assert.equal(links.filter((link) => !link.deletedAt).length, 1);
+  assert.equal(links.find((link) => !link.deletedAt).id, "new-link");
+}
+
+/**
+ * 测试添加链接时会跳过无效链接。
  *
  * @returns {void}
  */
@@ -1905,6 +2119,152 @@ function testDetectImportConflictVariousScenarios() {
 }
 
 /**
+ * 测试合并时链接墓碑（deletedAt）能阻止已删除链接被远端旧数据复活。
+ *
+ * @returns {void}
+ */
+function testMergeRespectsLinkTombstone() {
+  /** 本地数据：链接已被删除，留下 deletedAt 墓碑。 */
+  const localData = ensureSyncSettings(normalizeData({
+    version: 1,
+    activeSpaceId: "s1",
+    spaces: [{
+      id: "s1",
+      name: "S1",
+      createdAt: 1,
+      updatedAt: 300,
+      groups: [{
+        id: "g1",
+        name: "G1",
+        createdAt: 1,
+        updatedAt: 300,
+        links: [
+          { id: "l1", title: "已删除链接", url: "https://example.com", createdAt: 1, updatedAt: 100, deletedAt: 200 }
+        ]
+      }]
+    }],
+    settings: {}
+  }), "device-a");
+
+  /** 远端数据：链接仍然存在，没有墓碑。 */
+  const remoteData = ensureSyncSettings(normalizeData({
+    version: 1,
+    activeSpaceId: "s1",
+    spaces: [{
+      id: "s1",
+      name: "S1",
+      createdAt: 1,
+      updatedAt: 100,
+      groups: [{
+        id: "g1",
+        name: "G1",
+        createdAt: 1,
+        updatedAt: 100,
+        links: [
+          { id: "l1", title: "原始链接", url: "https://example.com", createdAt: 1, updatedAt: 100 }
+        ]
+      }]
+    }],
+    settings: {}
+  }), "device-b");
+
+  const merged = mergeWorkspaceData(localData, remoteData, "device-a");
+  const group = merged.spaces[0].groups[0];
+
+  assert.equal(group.links.length, 1);
+  assert.equal(group.links[0].id, "l1");
+  assert.equal(group.links[0].deletedAt, 200);
+
+  // 墓碑必须保留在同步数据中，才能阻止更晚上线的第三台设备再次带回旧链接。
+  const mergedWithThirdDevice = mergeWorkspaceData(merged, remoteData, "device-a");
+  assert.equal(mergedWithThirdDevice.spaces[0].groups[0].links[0].deletedAt, 200);
+}
+
+/**
+ * 测试合并时分组墓碑（deletedAt）能阻止已删除分组被远端旧数据复活。
+ *
+ * @returns {void}
+ */
+function testMergeRespectsGroupTombstone() {
+  const localData = ensureSyncSettings(normalizeData({
+    version: 1,
+    activeSpaceId: "s1",
+    spaces: [{
+      id: "s1",
+      name: "S1",
+      createdAt: 1,
+      updatedAt: 300,
+      groups: [
+        { id: "g1", name: "G1", createdAt: 1, updatedAt: 100, links: [] },
+        { id: "g2", name: "已删除分组", createdAt: 1, updatedAt: 100, deletedAt: 200, links: [] }
+      ]
+    }],
+    settings: {}
+  }), "device-a");
+
+  const remoteData = ensureSyncSettings(normalizeData({
+    version: 1,
+    activeSpaceId: "s1",
+    spaces: [{
+      id: "s1",
+      name: "S1",
+      createdAt: 1,
+      updatedAt: 100,
+      groups: [
+        { id: "g1", name: "G1", createdAt: 1, updatedAt: 100, links: [] },
+        { id: "g2", name: "原始分组", createdAt: 1, updatedAt: 100, links: [{ id: "l1", title: "L", url: "https://x.com", createdAt: 1 }] }
+      ]
+    }],
+    settings: {}
+  }), "device-b");
+
+  const merged = mergeWorkspaceData(localData, remoteData, "device-a");
+  const groups = merged.spaces[0].groups;
+
+  assert.deepEqual(groups.map((g) => g.id), ["g1", "g2"]);
+  assert.equal(groups.find((g) => g.id === "g2").deletedAt, 200);
+
+  const mergedWithThirdDevice = mergeWorkspaceData(merged, remoteData, "device-a");
+  assert.equal(mergedWithThirdDevice.spaces[0].groups.find((g) => g.id === "g2").deletedAt, 200);
+}
+
+/**
+ * 测试合并时空间墓碑（deletedAt）能阻止已删除空间被远端旧数据复活。
+ *
+ * @returns {void}
+ */
+function testMergeRespectsSpaceTombstone() {
+  const localData = ensureSyncSettings(normalizeData({
+    version: 1,
+    activeSpaceId: "s1",
+    spaces: [
+      { id: "s1", name: "S1", createdAt: 1, updatedAt: 100, groups: [] },
+      { id: "s2", name: "已删除空间", createdAt: 1, updatedAt: 100, deletedAt: 200, groups: [] }
+    ],
+    settings: {}
+  }), "device-a");
+
+  const remoteData = ensureSyncSettings(normalizeData({
+    version: 1,
+    activeSpaceId: "s1",
+    spaces: [
+      { id: "s1", name: "S1", createdAt: 1, updatedAt: 100, groups: [] },
+      { id: "s2", name: "原始空间", createdAt: 1, updatedAt: 100, groups: [{ id: "g1", name: "G", createdAt: 1, links: [] }] }
+    ],
+    settings: {}
+  }), "device-b");
+
+  const merged = mergeWorkspaceData(localData, remoteData, "device-a");
+  const spaces = merged.spaces;
+
+  assert.deepEqual(spaces.map((s) => s.id), ["s1", "s2"]);
+  assert.equal(spaces.find((s) => s.id === "s2").deletedAt, 200);
+
+  const mergedWithThirdDevice = mergeWorkspaceData(merged, remoteData, "device-a");
+  assert.equal(mergedWithThirdDevice.spaces.find((s) => s.id === "s2").deletedAt, 200);
+}
+
+/**
  * 执行全部核心逻辑测试。
  *
  * @returns {void}
@@ -1939,6 +2299,10 @@ async function runTests() {
   testEnsureSyncSettingsAddsDefaults();
   testEnsureSyncSettingsKeepsAutoSyncOptions();
   testGetDataUpdatedAtReturnsLatestTimestamp();
+  testGetDataUpdatedAtIncludesLinksAndTombstones();
+  testNormalizeDataPreservesAllSpaceTombstones();
+  testMergePreservesAllSpaceTombstones();
+  testNormalizeDataSkipsDeletedActiveSpace();
   await testEncryptedBackupRoundTrip();
   await testRestoreEncryptedBackupReadsLegacyXorBackup();
   await testRestoreEncryptedBackupRejectsUnknownEncryption();
@@ -1947,6 +2311,7 @@ async function runTests() {
   testExportDataUsesTabTabCompatibleShape();
   testExportDataRemovesSyncSecrets();
   testCreateBackupSafeDataRemovesSecrets();
+  testSyncDataRoundTripPreservesTombstonesWithoutSecrets();
   testExportImportRoundTripPreservesGroupsAndLinks();
   testImportDataRejectsInvalidText();
   testImportDataReadsPackagedBackup();
@@ -1964,14 +2329,19 @@ async function runTests() {
   testMergeWorkspaceDataKeepsBothSidesNewItems();
   testMergeWorkspaceDataMergesLinksWithoutPrompt();
   testMergeWorkspaceDataKeepsLocalOrderWithRemoteAppended();
+  testMergeLinksRefreshesIndexesAfterUrlChange();
   testClearAllDataReturnsDefaultData();
   // 新增测试用例
   testFindGroupLocatesGroup();
   testFindLinkLocatesLink();
+  testAddLinksToGroupAllowsUrlAfterTombstone();
   testAddLinksToGroupSkipsInvalidLinks();
   testMoveArrayItemBoundaryCases();
   await testEncryptedBackupFormatDetection();
   testDetectImportConflictVariousScenarios();
+  testMergeRespectsLinkTombstone();
+  testMergeRespectsGroupTombstone();
+  testMergeRespectsSpaceTombstone();
   console.log("所有核心逻辑测试通过");
 }
 

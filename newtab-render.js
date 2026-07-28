@@ -1,6 +1,19 @@
 (function (root) {
 const app = root.MyTabDeskPage;
 const { state, elements, SPACE_ICON_OPTIONS } = app;
+
+/**
+ * 过滤掉已标记为删除（deletedAt）的项，用于渲染层不显示墓碑项。
+ *
+ * @param {Array<object>} items 原始数组。
+ * @returns {Array<object>} 不含墓碑的数组。
+ */
+function visibleItems(items) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+  return items.filter((item) => !item.deletedAt);
+}
 const {
   filterGroups
 } = app;
@@ -100,7 +113,7 @@ function renderAll() {
 function renderSpaces() {
   clearElement(elements.spaceList);
 
-  for (const space of state.data.spaces) {
+  for (const space of visibleItems(state.data.spaces)) {
     const itemWrap = document.createElement("div");
     itemWrap.className = "space-item-wrap";
 
@@ -337,9 +350,10 @@ function renderActiveSpaceHeader() {
   }
 
   /** 当前空间分组总数。 */
-  const groupCount = activeSpace.groups.length;
+  const visibleGroups = visibleItems(activeSpace.groups);
+  const groupCount = visibleGroups.length;
   /** 当前空间链接总数。 */
-  const linkCount = activeSpace.groups.reduce((total, group) => total + group.links.length, 0);
+  const linkCount = visibleGroups.reduce((total, group) => total + visibleItems(group.links).length, 0);
   elements.currentSpaceName.textContent = `${getDisplaySpaceIcon(activeSpace.icon)} ${activeSpace.name}`;
   elements.currentSpaceMeta.textContent = `${groupCount} 个分组 · ${linkCount} 个链接`;
 }
@@ -363,21 +377,22 @@ function renderGroups() {
   /** 当前搜索关键词。 */
   const keyword = state.searchKeyword.trim().toLowerCase();
   /** 搜索过滤后的分组列表。 */
-  const visibleGroups = filterGroups(activeSpace.groups, keyword);
+  const allVisibleGroups = visibleItems(activeSpace.groups);
+  const visibleGroupsList = filterGroups(allVisibleGroups, keyword);
 
-  if (activeSpace.groups.length === 0) {
+  if (allVisibleGroups.length === 0) {
     showEmptyState("还没有分组", "点击右上角“添加分组”，开始整理你的标签页。" );
     return;
   }
 
-  if (visibleGroups.length === 0) {
+  if (visibleGroupsList.length === 0) {
     showEmptyState("没有找到匹配结果", "请尝试更换关键词。" );
     return;
   }
 
   hideEmptyState();
 
-  for (const group of visibleGroups) {
+  for (const group of visibleGroupsList) {
     elements.groupList.appendChild(createGroupElement(group, activeSpace));
   }
 }
@@ -414,20 +429,21 @@ function hideEmptyState() {
 function createGroupFaviconPreview(group) {
   const preview = document.createElement("div");
   preview.className = "group-favicon-preview";
-  const hasLinks = Array.isArray(group.links) && group.links.length > 0;
+  const hasLinks = Array.isArray(group.links) && visibleItems(group.links).length > 0;
   preview.hidden = !group.collapsed || !hasLinks;
   if (preview.hidden) {
     return preview;
   }
 
   const max = 5;
-  const links = group.links.slice(0, max);
+  const links = visibleItems(group.links).slice(0, max);
   for (const link of links) {
     preview.appendChild(createFavicon(link.favIconUrl, link.title || link.url, link.url, state.faviconRefreshAt[link.id] || 0));
   }
   // 超过最大展示数量时用 +N 提示剩余链接
-  if (group.links.length > max) {
-    preview.appendChild(createTextElement("span", "favicon-more", `+${group.links.length - max}`));
+  const totalVisible = visibleItems(group.links).length;
+  if (totalVisible > max) {
+    preview.appendChild(createTextElement("span", "favicon-more", `+${totalVisible - max}`));
   }
   return preview;
 }
@@ -488,7 +504,7 @@ function createGroupElement(group, activeSpace) {
   toggleButton.appendChild(arrowIcon);
 
   /** 分组元信息。 */
-  const meta = createTextElement("span", "group-meta", `${group.links.length} 个链接`);
+  const meta = createTextElement("span", "group-meta", `${visibleItems(group.links).length} 个链接`);
 
   headerInfo.append(toggleButton, createGroupNameElement(group), meta);
 
@@ -605,10 +621,11 @@ function createGroupElement(group, activeSpace) {
       }
     });
 
-    if (group.links.length === 0) {
+    const visibleLinks = visibleItems(group.links);
+    if (visibleLinks.length === 0) {
       linkGrid.appendChild(createTextElement("div", "panel-message", "这个分组还没有链接，可从右侧当前标签页中拖入或保存。"));
     } else {
-      for (const link of group.links) {
+      for (const link of visibleLinks) {
         linkGrid.appendChild(createLinkElement(group.id, link));
       }
     }
@@ -688,7 +705,7 @@ function createGroupNameElement(group) {
  */
 function createMoveGroupMenuElement(group, activeSpace) {
   /** 可移动到的目标空间列表。 */
-  const targetSpaces = state.data.spaces.filter((space) => activeSpace && space.id !== activeSpace.id);
+  const targetSpaces = state.data.spaces.filter((space) => !space.deletedAt && activeSpace && space.id !== activeSpace.id);
   /** 移动分组菜单容器。 */
   const menu = document.createElement("div");
   menu.className = "move-group-menu";
@@ -701,7 +718,7 @@ function createMoveGroupMenuElement(group, activeSpace) {
   /** 移动菜单标题。 */
   const title = createTextElement("strong", "move-group-menu-title", "移动到其他空间");
   /** 移动菜单说明。 */
-  const description = createTextElement("span", "move-group-menu-desc", `${group.name} · ${group.links.length} 个链接`);
+  const description = createTextElement("span", "move-group-menu-desc", `${group.name} · ${visibleItems(group.links).length} 个链接`);
   header.append(title, description);
   menu.appendChild(header);
 
@@ -767,7 +784,7 @@ function createMoveGroupSpaceElement(group, space) {
   /** 目标空间名称。 */
   const name = createTextElement("span", "move-group-space-name", space.name);
   /** 目标空间统计信息。 */
-  const meta = createTextElement("span", "move-group-space-meta", `${space.groups.length} 个分组 · ${linkCount} 个链接`);
+  const meta = createTextElement("span", "move-group-space-meta", `${visibleItems(space.groups).length} 个分组 · ${linkCount} 个链接`);
   content.append(name, meta);
   button.append(icon, content);
   button.addEventListener("click", (event) => {
@@ -1146,6 +1163,9 @@ function renderSettingsStatus() {
   elements.gistTokenInput.value = sync.gistToken || "";
   elements.gistIdInput.value = sync.gistId || "";
   elements.gistFilenameInput.value = sync.gistFilename || "mytabdesk-sync.json";
+  if (elements.syncEncryptionPasswordInput) {
+    elements.syncEncryptionPasswordInput.value = sync.syncEncryptionPassword || "";
+  }
 }
 
 root.MyTabDeskRender = {

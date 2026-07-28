@@ -4,8 +4,10 @@
   "description": "本地优先的浏览器新标签页工作台扩展",
   "private": true,
   "scripts": {
-    "test": "node tests/tabdesk-core.test.js",
-    "lint": "eslint ."
+    "test": "node tests/tabdesk-core.test.js && node tests/browser-messaging.test.js && node tests/sync-network.test.js && node tests/sync-transport.test.js",
+    "lint": "eslint .",
+    "build:dist": "node scripts/build-dist.js",
+    "check:dist": "node scripts/build-dist.js --check"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
