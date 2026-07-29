@@ -201,8 +201,26 @@ function moveLinkBetweenGroups(data, spaceId, sourceGroupId, targetGroupId, sour
     return nextData;
   }
 
-  /** 被移动的链接数据。 */
-  const [movedLink] = sourceGroup.links.splice(sourceIndex, 1);
+  /** 当前移动版本时间。 */
+  const movedAt = getCurrentTime();
+  /** 被移动的原始链接数据。 */
+  const originalLink = sourceGroup.links[sourceIndex];
+  /** 源位置删除墓碑，阻止旧设备把链接补回原分组。 */
+  sourceGroup.links[sourceIndex] = {
+    id: originalLink.id,
+    title: originalLink.title,
+    url: originalLink.url,
+    createdAt: originalLink.createdAt,
+    updatedAt: movedAt,
+    deletedAt: movedAt,
+    order: originalLink.order
+  };
+  /** 目标位置活动副本。 */
+  const movedLink = {
+    ...originalLink,
+    updatedAt: movedAt,
+    deletedAt: undefined
+  };
   /** 目标链接在目标分组中的索引。 */
   const targetIndex = targetGroup.links.findIndex((link) => link.id === targetLinkId);
 
@@ -213,16 +231,67 @@ function moveLinkBetweenGroups(data, spaceId, sourceGroupId, targetGroupId, sour
   }
 
   // 移动后，源分组和目标分组的 link 顺序都发生了变化，按下标回写 order
-  sourceGroup.links.forEach((link, index) => {
-    link.order = index;
+  let sourceOrder = 0;
+  sourceGroup.links.forEach((link) => {
+    if (!link.deletedAt) {
+      link.order = sourceOrder;
+      sourceOrder += 1;
+    }
   });
-  targetGroup.links.forEach((link, index) => {
-    link.order = index;
+  let targetOrder = 0;
+  targetGroup.links.forEach((link) => {
+    if (!link.deletedAt) {
+      link.order = targetOrder;
+      targetOrder += 1;
+    }
   });
 
-  sourceGroup.updatedAt = getCurrentTime();
-  targetGroup.updatedAt = getCurrentTime();
-  space.updatedAt = getCurrentTime();
+  sourceGroup.updatedAt = movedAt;
+  targetGroup.updatedAt = movedAt;
+  space.updatedAt = movedAt;
+  return nextData;
+}
+
+/**
+ * 把分组跨空间移动，并在源空间保留删除墓碑。
+ *
+ * @param {object} data 当前全量数据。
+ * @param {string} sourceSpaceId 源空间 ID。
+ * @param {string} targetSpaceId 目标空间 ID。
+ * @param {string} groupId 分组 ID。
+ * @returns {object} 移动后的全量数据。
+ */
+function moveGroupBetweenSpaces(data, sourceSpaceId, targetSpaceId, groupId) {
+  const nextData = normalizeData(data);
+  const sourceSpace = nextData.spaces.find((space) => space.id === sourceSpaceId && !space.deletedAt);
+  const targetSpace = nextData.spaces.find((space) => space.id === targetSpaceId && !space.deletedAt);
+
+  if (!sourceSpace || !targetSpace || sourceSpace.id === targetSpace.id) {
+    return nextData;
+  }
+
+  const sourceIndex = sourceSpace.groups.findIndex((group) => group.id === groupId && !group.deletedAt);
+  if (sourceIndex < 0) {
+    return nextData;
+  }
+
+  const movedAt = getCurrentTime();
+  const originalGroup = sourceSpace.groups[sourceIndex];
+  sourceSpace.groups[sourceIndex] = {
+    id: originalGroup.id,
+    name: originalGroup.name,
+    createdAt: originalGroup.createdAt,
+    updatedAt: movedAt,
+    deletedAt: movedAt,
+    links: []
+  };
+  targetSpace.groups.push({
+    ...originalGroup,
+    updatedAt: movedAt,
+    deletedAt: undefined
+  });
+  sourceSpace.updatedAt = movedAt;
+  targetSpace.updatedAt = movedAt;
   return nextData;
 }
 
@@ -280,6 +349,7 @@ function addLinksToGroup(data, spaceId, groupId, rawLinks) {
   reorderGroups,
   reorderLinks,
   updateLink,
+  moveGroupBetweenSpaces,
   moveLinkBetweenGroups,
   addLinksToGroup
   };

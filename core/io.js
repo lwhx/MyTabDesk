@@ -29,6 +29,35 @@ function createBackupSafeData(data) {
 }
 
 /**
+ * 创建面向用户展示/普通导出的活动数据副本，不包含删除墓碑。
+ *
+ * @param {object} data 当前全量数据。
+ * @returns {object} 仅包含活动空间、分组和链接的数据副本。
+ */
+function createVisibleWorkspaceData(data) {
+  const normalizedData = normalizeData(data);
+  const spaces = normalizedData.spaces
+    .filter((space) => !space.deletedAt)
+    .map((space) => ({
+      ...space,
+      groups: space.groups
+        .filter((group) => !group.deletedAt)
+        .map((group) => ({
+          ...group,
+          links: group.links.filter((link) => !link.deletedAt)
+        }))
+    }));
+
+  return {
+    ...normalizedData,
+    activeSpaceId: spaces.some((space) => space.id === normalizedData.activeSpaceId)
+      ? normalizedData.activeSpaceId
+      : spaces[0].id,
+    spaces
+  };
+}
+
+/**
  * 标准化普通备份数据包，兼容旧版直接导出的数据结构。
  *
  * @param {object} parsedData 解析后的备份或全量数据对象。
@@ -58,7 +87,7 @@ function extractBackupData(parsedData) {
  */
 function exportData(data) {
   /** tabtab 兼容备份结构。 */
-  const tabtabBackup = convertWorkspaceDataToTabTabBackup(data);
+  const tabtabBackup = convertWorkspaceDataToTabTabBackup(createVisibleWorkspaceData(data));
 
   return JSON.stringify(tabtabBackup, null, 2);
 }
@@ -117,6 +146,7 @@ function importData(text) {
 
   return {
     createBackupSafeData,
+  createVisibleWorkspaceData,
   extractBackupData,
   exportData,
   exportSyncData,

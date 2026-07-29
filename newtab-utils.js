@@ -34,6 +34,17 @@ function markDirty() {
 }
 
 /**
+ * 标记用户设置已更新，并写入独立版本时间。
+ *
+ * @returns {void}
+ */
+function markSettingsDirty() {
+  if (state.data && state.data.settings) {
+    state.data.settings.updatedAt = getCurrentTime();
+  }
+}
+
+/**
  * 串行执行同步类操作，保证同一时刻只有一个同步任务运行，后续调用自动排队。
  * 单个任务的失败不会阻塞后续排队任务（通过 .catch 续接链条实现）。
  *
@@ -621,6 +632,7 @@ root.MyTabDeskUtils = {
   getChromeFaviconUrl,
   getCurrentTime,
   markDirty,
+  markSettingsDirty,
   isSafeFaviconUrl,
   withSyncLock,
   withStorageLock,

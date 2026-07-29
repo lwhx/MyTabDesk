@@ -23,7 +23,8 @@ function getEffectiveUpdatedAt(item) {
   if (!item) {
     return 0;
   }
-  return Math.max(item.createdAt || 0, item.updatedAt || 0, item.deletedAt || 0);
+  // createdAt 可能由旧数据迁移时补齐，不能参与跨设备版本竞争。
+  return Math.max(item.updatedAt || 0, item.deletedAt || 0);
 }
 
 /**
@@ -324,15 +325,20 @@ function mergeWorkspaceData(localData, remoteData, deviceId) {
   /** 合并后仍然存在的当前激活空间 ID。 */
   const activeSpaceId = liveSpaces.some((space) => space.id === normalizedLocalData.activeSpaceId) ? normalizedLocalData.activeSpaceId : liveSpaces[0].id;
   /** 合并后的全量数据。 */
+  const newerSettings = (normalizedRemoteData.settings.updatedAt || 0) > (normalizedLocalData.settings.updatedAt || 0)
+    ? normalizedRemoteData.settings
+    : normalizedLocalData.settings;
   const mergedData = ensureSyncSettings({
     version: Math.max(normalizedLocalData.version || 1, normalizedRemoteData.version || 1),
     activeSpaceId,
     spaces,
-    settings: normalizedLocalData.settings
+    settings: newerSettings
   }, normalizedLocalData.settings.sync.deviceId);
 
   mergedData.settings.sync = {
-    ...normalizedLocalData.settings.sync
+    ...newerSettings.sync,
+    // 当前设备身份不跟随其它页面/远端设置变化。
+    deviceId: normalizedLocalData.settings.sync.deviceId
   };
   return mergedData;
 }

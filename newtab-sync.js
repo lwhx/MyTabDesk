@@ -4,6 +4,7 @@ const { state, elements } = app;
 const {
   getCurrentTime,
   getEnabledSyncProviders,
+  getAutoSyncProviders,
   mergeWorkspaceData,
   exportSyncData,
   importSyncData,
@@ -18,6 +19,7 @@ const {
   getSyncSettings,
   createWorkspaceSnapshot,
   saveData,
+  markSettingsDirty,
   withSyncLock
 } = root.MyTabDeskUtils;
 const { showAlert, showConfirm } = root.MyTabDeskDialogs;
@@ -134,6 +136,7 @@ async function saveSyncSettingsFromForm() {
   const sync = state.data.settings.sync;
 
   Object.assign(sync, form);
+  markSettingsDirty();
   // 表单已保存到数据，清除脏标记，允许后续渲染回写表单
   state.settingsFormDirty = false;
   await saveData({ skipAutoSync: true });
@@ -322,7 +325,6 @@ async function runBidirectionalSync(sync, provider) {
     }
   }
 
-  markSyncCompleted(state.data.settings.sync, getCurrentTime());
   state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
 
   /** 合并统计用于日志。 */
@@ -348,23 +350,27 @@ async function runBidirectionalSync(sync, provider) {
 function runAutoSyncNow() {
   /** 当前同步配置。 */
   const sync = getSyncSettings();
-  /** 已启用的同步服务商列表。 */
-  const providers = getEnabledSyncProviders(sync);
+  /** 实际开启自动同步的服务商列表。 */
+  const providers = getAutoSyncProviders(sync);
 
   // 前置守卫放在锁外，无待同步任务时直接返回，避免无谓排队
-  if (!isAutoSyncEnabled(sync) || !sync.autoSyncPendingAt) {
+  if (providers.length === 0 || !sync.autoSyncPendingAt) {
     return Promise.resolve();
   }
 
   return withSyncLock(async () => {
     try {
-      validateSyncSettings();
-
       for (const provider of providers) {
-        await runBidirectionalSync(sync, provider);
+        validateSyncProviderSettings(state.data.settings.sync, provider);
+        await runBidirectionalSync(state.data.settings.sync, provider);
       }
+
+      // 只有全部启用的自动同步服务商都成功后，才清除全局 pending。
+      markSyncCompleted(state.data.settings.sync, getCurrentTime());
+      await saveData({ skipAutoSync: true });
     } catch (error) {
-      sync.lastAutoSyncError = error.message || "自动同步失败";
+      // 合并可能替换 state.data，必须写入当前引用并保留 pending 供后续补传。
+      state.data.settings.sync.lastAutoSyncError = error.message || "自动同步失败";
       await saveData({ skipAutoSync: true });
     } finally {
       root.MyTabDeskRender.renderSettingsStatus();
@@ -391,11 +397,12 @@ function scheduleAutoSync() {
 
   state.autoSyncTimerId = window.setTimeout(() => {
     state.autoSyncTimerId = 0;
-    try {
-      runAutoSyncNow();
-    } catch (error) {
+    const runner = root.MyTabDeskNotifications && root.MyTabDeskNotifications.runLeasedAutoSync
+      ? root.MyTabDeskNotifications.runLeasedAutoSync()
+      : runAutoSyncNow();
+    Promise.resolve(runner).catch((error) => {
       console.error("自动同步调度失败：", error);
-    }
+    });
   }, 1200);
 }
 

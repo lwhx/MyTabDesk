@@ -125,6 +125,18 @@ function getEnabledSyncProviders(sync) {
 }
 
 /**
+ * 获取实际开启自动同步的服务商列表。
+ *
+ * @param {object} sync 同步配置。
+ * @returns {string[]} 自动同步服务商列表。
+ */
+function getAutoSyncProviders(sync) {
+  return getEnabledSyncProviders(sync).filter((provider) => provider === "webdav"
+    ? Boolean(sync.webdavAutoSyncEnabled)
+    : Boolean(sync.gistAutoSyncEnabled));
+}
+
+/**
  * 判断 GitHub Gist 是否为 MyTabDesk 同步 Gist。
  *
  * @param {object} gist GitHub Gist 摘要对象。
@@ -232,6 +244,7 @@ function getDataUpdatedAt(data) {
   createBasicAuthHeader,
   isSyncProviderEnabled,
   getEnabledSyncProviders,
+  getAutoSyncProviders,
   isMyTabDeskGist,
   ensureSyncSettings,
   getDataUpdatedAt

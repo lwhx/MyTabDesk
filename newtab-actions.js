@@ -11,11 +11,13 @@ const {
   isValidTabUrl,
   tabsToLinks,
   exportData,
+  createVisibleWorkspaceData,
   importData,
   clearAllData,
   reorderSpaces,
   reorderGroups,
   reorderLinks,
+  moveGroupBetweenSpaces,
   moveLinkBetweenGroups,
   updateLink,
   addLinksToGroup,
@@ -29,7 +31,8 @@ const {
   hasChromeTabs,
   saveData,
   formatDateTime,
-  markDirty
+  markDirty,
+  markSettingsDirty
 } = root.MyTabDeskUtils;
 const { showAlert, showConfirm, showPrompt } = root.MyTabDeskDialogs;
 
@@ -397,19 +400,7 @@ async function moveGroupToSpace(groupId, targetSpaceId) {
     return;
   }
 
-  /** 当前时间戳。 */
-  const now = getCurrentTime();
-  /** 移动后的分组。 */
-  const movedGroup = {
-    ...group,
-    name: group.name,
-    updatedAt: now
-  };
-
-  sourceSpace.groups.splice(sourceGroupIndex, 1);
-  targetSpace.groups.push(movedGroup);
-  sourceSpace.updatedAt = now;
-  targetSpace.updatedAt = now;
+  state.data = moveGroupBetweenSpaces(state.data, sourceSpace.id, targetSpace.id, group.id);
   state.movingGroupId = "";
   state.draggedGroupId = "";
 
@@ -661,12 +652,15 @@ async function openGroup(groupId) {
   /** 目标分组。 */
   const group = findGroupInSpace(activeSpace, groupId);
 
-  if (!group || !Array.isArray(group.links) || group.links.length === 0) {
+  /** 可打开的活动链接。 */
+  const liveLinks = group && Array.isArray(group.links) ? group.links.filter((link) => !link.deletedAt) : [];
+
+  if (liveLinks.length === 0) {
     await showAlert("该分组没有可打开的链接。", "无法打开");
     return;
   }
 
-  for (const link of group.links) {
+  for (const link of liveLinks) {
     if (isValidTabUrl(link.url)) {
       await openLink(link.url);
     }
@@ -873,12 +867,18 @@ function exportSpace(spaceId) {
   /** 空间导出文件名。 */
   const filename = `mytabdesk-space-${space.name}-${formatDateTime(now).replace(/[: ]/g, "-")}.json`;
   /** 空间导出数据包。 */
+  const visibleSpace = createVisibleWorkspaceData({
+    version: state.data.version,
+    activeSpaceId: space.id,
+    spaces: [space],
+    settings: state.data.settings
+  }).spaces[0];
   const payload = JSON.stringify({
     backupVersion: app.BACKUP_VERSION,
     appVersion: app.APP_VERSION,
     exportedAt: now,
     type: "space",
-    space
+    space: visibleSpace
   }, null, 2);
 
   state.openSpaceMenuId = "";
@@ -1081,6 +1081,7 @@ async function clearData() {
  */
 async function toggleTheme() {
   state.data.settings.theme = state.data.settings.theme === "dark" ? "light" : "dark";
+  markSettingsDirty();
   await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
@@ -1092,6 +1093,7 @@ async function toggleTheme() {
  */
 async function toggleSidebar() {
   state.data.settings.sidebarCollapsed = !state.data.settings.sidebarCollapsed;
+  markSettingsDirty();
   await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
@@ -1103,6 +1105,7 @@ async function toggleSidebar() {
  */
 async function toggleTabsPanel() {
   state.data.settings.rightPanelCollapsed = !state.data.settings.rightPanelCollapsed;
+  markSettingsDirty();
   await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }
@@ -1114,6 +1117,7 @@ async function toggleTabsPanel() {
  */
 async function toggleCompactLinks() {
   state.data.settings.compactLinks = !state.data.settings.compactLinks;
+  markSettingsDirty();
   await persistWithDirty();
   root.MyTabDeskRender.renderAll();
 }

@@ -34,6 +34,7 @@ function createDefaultData() {
       }
     ],
     settings: {
+      updatedAt: 0,
       theme: "light",
       rightPanelCollapsed: false,
       sidebarCollapsed: false,
@@ -83,7 +84,8 @@ function normalizeLink(link) {
     url: link && link.url ? link.url : "",
     favIconUrl: link && link.favIconUrl ? link.favIconUrl : "",
     createdAt: link && link.createdAt ? link.createdAt : now,
-    updatedAt: link && link.updatedAt ? link.updatedAt : link && link.createdAt ? link.createdAt : now,
+    // 旧数据完全缺失版本时间时使用 0，不能用迁移时当前时间伪装成最新修改。
+    updatedAt: link && link.updatedAt ? link.updatedAt : link && link.createdAt ? link.createdAt : 0,
     // order 缺失时回落到 createdAt，保证旧数据合并排序行为与历史完全一致
     order: link && typeof link.order === "number" ? link.order : link && link.createdAt ? link.createdAt : now,
     // 保留删除墓碑字段，用于跨设备同步时阻止已删除链接被旧远端数据复活
@@ -110,7 +112,7 @@ function normalizeGroup(group) {
     pinned: Boolean(group && group.pinned),
     links: rawLinks.map(normalizeLink).filter((link) => Boolean(link.url)),
     createdAt: group && group.createdAt ? group.createdAt : now,
-    updatedAt: group && group.updatedAt ? group.updatedAt : now,
+    updatedAt: group && group.updatedAt ? group.updatedAt : group && group.createdAt ? group.createdAt : 0,
     deletedAt: group && group.deletedAt ? group.deletedAt : undefined
   };
 }
@@ -133,7 +135,7 @@ function normalizeSpace(space) {
     icon: space && space.icon && space.icon !== "folder" ? space.icon : getDefaultSpaceIcon(),
     groups: rawGroups.map(normalizeGroup),
     createdAt: space && space.createdAt ? space.createdAt : now,
-    updatedAt: space && space.updatedAt ? space.updatedAt : now,
+    updatedAt: space && space.updatedAt ? space.updatedAt : space && space.createdAt ? space.createdAt : 0,
     deletedAt: space && space.deletedAt ? space.deletedAt : undefined
   };
 }
@@ -172,6 +174,7 @@ function normalizeData(rawData) {
     activeSpaceId: activeSpaceExists ? rawData.activeSpaceId : liveSpaces[0].id,
     spaces,
     settings: {
+      updatedAt: getPathValue(rawData, "settings.updatedAt", 0),
       theme: getPathValue(rawData, "settings.theme", "light"),
       rightPanelCollapsed: getPathValue(rawData, "settings.rightPanelCollapsed", false),
       sidebarCollapsed: getPathValue(rawData, "settings.sidebarCollapsed", false),
