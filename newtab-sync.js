@@ -19,7 +19,7 @@ const {
   getSyncSettings,
   createWorkspaceSnapshot,
   saveData,
-  markSettingsDirty,
+  markSyncStateDirty,
   withSyncLock
 } = root.MyTabDeskUtils;
 const { showAlert, showConfirm } = root.MyTabDeskDialogs;
@@ -134,12 +134,24 @@ async function saveSyncSettingsFromForm() {
   const form = readSyncSettingsForm();
   /** 当前同步配置。 */
   const sync = state.data.settings.sync;
+  /** 本次表单相对当前页面快照真正修改的配置字段。 */
+  const syncSettingsPatch = {};
+  for (const [field, value] of Object.entries(form)) {
+    if (field !== "gistId" && value !== sync[field]) {
+      syncSettingsPatch[field] = value;
+    }
+  }
+  /** 用户是否真正修改了 Gist ID，而不是旧页面回写缓存值。 */
+  const gistIdChanged = form.gistId !== sync.gistId;
 
-  Object.assign(sync, form);
-  markSettingsDirty();
+  Object.assign(sync, syncSettingsPatch);
+  if (gistIdChanged) {
+    sync.gistId = form.gistId;
+    markSyncStateDirty(["gistId"]);
+  }
   // 表单已保存到数据，清除脏标记，允许后续渲染回写表单
   state.settingsFormDirty = false;
-  await saveData({ skipAutoSync: true });
+  await saveData({ skipAutoSync: true, syncSettingsPatch });
   root.MyTabDeskRender.renderSettingsStatus();
 }
 
@@ -213,6 +225,7 @@ async function uploadAutoSync(sync) {
       /** 上传后返回的 Gist ID。 */
       const gistId = await uploadGist(sync, payload);
       state.data.settings.sync.gistId = gistId;
+      markSyncStateDirty(["gistId"]);
 
       if (elements.gistIdInput) {
         elements.gistIdInput.value = gistId;
@@ -288,6 +301,14 @@ function markSyncCompleted(sync, syncedAt) {
   sync.lastAutoSyncAt = syncedAt;
   sync.autoSyncPendingAt = 0;
   sync.lastAutoSyncError = "";
+  markSyncStateDirty([
+    "lastSyncAt",
+    "lastBackupAt",
+    "lastImportAt",
+    "lastAutoSyncAt",
+    "autoSyncPendingAt",
+    "lastAutoSyncError"
+  ]);
 }
 
 /**
@@ -319,6 +340,7 @@ async function runBidirectionalSync(sync, provider) {
     /** 上传后返回的 Gist ID。 */
     const gistId = await uploadGist(state.data.settings.sync, await createSyncPayload());
     state.data.settings.sync.gistId = gistId;
+    markSyncStateDirty(["gistId"]);
 
     if (elements.gistIdInput) {
       elements.gistIdInput.value = gistId;
@@ -371,6 +393,7 @@ function runAutoSyncNow() {
     } catch (error) {
       // 合并可能替换 state.data，必须写入当前引用并保留 pending 供后续补传。
       state.data.settings.sync.lastAutoSyncError = error.message || "自动同步失败";
+      markSyncStateDirty(["lastAutoSyncError"]);
       await saveData({ skipAutoSync: true });
     } finally {
       root.MyTabDeskRender.renderSettingsStatus();
@@ -575,6 +598,7 @@ async function uploadManualSync(provider) {
         /** 上传后返回的 Gist ID。 */
         const gistId = await uploadGist(sync, payload);
         state.data.settings.sync.gistId = gistId;
+        markSyncStateDirty(["gistId"]);
         elements.gistIdInput.value = gistId;
       }
 
@@ -583,6 +607,13 @@ async function uploadManualSync(provider) {
       state.data.settings.sync.autoSyncPendingAt = 0;
       state.data.settings.sync.lastAutoSyncAt = state.data.settings.sync.lastSyncAt;
       state.data.settings.sync.lastAutoSyncError = "";
+      markSyncStateDirty([
+        "lastSyncAt",
+        "lastBackupAt",
+        "lastAutoSyncAt",
+        "autoSyncPendingAt",
+        "lastAutoSyncError"
+      ]);
 
       const uploadStats = getWorkspaceStats(state.data);
       addSyncLog({
@@ -663,6 +694,7 @@ async function downloadManualSync(provider) {
         lastImportAt: getCurrentTime(),
         lastSyncAt: getCurrentTime()
       };
+      markSyncStateDirty(["lastImportAt", "lastSyncAt"]);
       state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
       state.viewMode = "workspace";
 

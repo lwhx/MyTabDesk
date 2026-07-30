@@ -22,7 +22,11 @@ function createBackupSafeData(data) {
   /** 标准化后的数据副本。 */
   const backupData = ensureSyncSettings(normalizeData(data));
 
+  // 远程连接地址可能通过 URL userinfo 或查询参数携带凭据，备份中不保留连接信息。
+  backupData.settings.sync.webdavUrl = "";
+  backupData.settings.sync.webdavUsername = "";
   backupData.settings.sync.webdavPassword = "";
+  backupData.settings.sync.webdavFilename = "";
   backupData.settings.sync.gistToken = "";
   backupData.settings.sync.syncEncryptionPassword = "";
   return backupData;
@@ -93,6 +97,21 @@ function exportData(data) {
 }
 
 /**
+ * 导出完整的 MyTabDesk 原生备份包。
+ * 保留布局、排序、版本时间和删除墓碑，但剔除本地同步凭据。
+ *
+ * @param {object} data 当前全量数据。
+ * @returns {string} 格式化后的原生备份 JSON。
+ */
+function exportNativeBackup(data) {
+  return JSON.stringify({
+    format: "mytabdesk-backup",
+    version: 1,
+    data: createBackupSafeData(data)
+  }, null, 2);
+}
+
+/**
  * 导出用于设备同步的完整内部数据，同时移除本地敏感凭据。
  * 与面向用户的 TabTab 兼容导出不同，本格式保留 updatedAt/deletedAt 等同步元数据。
  *
@@ -149,6 +168,7 @@ function importData(text) {
   createVisibleWorkspaceData,
   extractBackupData,
   exportData,
+  exportNativeBackup,
   exportSyncData,
   importSyncData,
   importData

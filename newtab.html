@@ -55,11 +55,16 @@
             <span aria-hidden="true">⌕</span>
             <input id="searchInput" class="search-input" type="search" placeholder="搜索分组、标题或网址..." autocomplete="off" />
           </label>
-          <button id="toggleThemeBtn" class="secondary-button" type="button">深色模式</button>
-          <button id="toggleTabsPanelBtn" class="secondary-button" type="button">收起右栏</button>
-          <button id="batchDeleteBtn" class="secondary-button danger-text-button" type="button">批量删除</button>
           <button id="toggleCompactLinksBtn" class="secondary-button" type="button" aria-label="切换紧凑视图">紧凑视图</button>
           <button id="createGroupBtn" class="primary-button" type="button">添加分组</button>
+          <details class="workspace-more-menu">
+            <summary class="workspace-more-trigger" aria-label="打开工作台更多操作">更多</summary>
+            <div class="workspace-more-panel" role="menu">
+              <button id="toggleThemeBtn" class="workspace-menu-action" type="button" role="menuitem">深色模式</button>
+              <button id="toggleTabsPanelBtn" class="workspace-menu-action" type="button" role="menuitem">收起右栏</button>
+              <button id="batchDeleteBtn" class="workspace-menu-action danger" type="button" role="menuitem">批量删除</button>
+            </div>
+          </details>
         </div>
       </header>
 
@@ -83,7 +88,7 @@
         <header class="settings-header">
           <div>
             <h1 class="settings-title">备份与同步</h1>
-            <p class="settings-subtitle">当前数据版本：<span id="settingsVersionValue">-</span>，最后修改时间：<span id="syncLastModifiedValue">-</span></p>
+            <p class="settings-subtitle">管理完整备份、远程同步与多设备数据安全。数据版本 <span id="settingsVersionValue">-</span> · 最后修改 <span id="syncLastModifiedValue">-</span></p>
           </div>
         </header>
 
@@ -115,7 +120,7 @@
           <span class="settings-status-item"><span class="settings-status-label">同步模式</span><strong id="syncModeValue">手动同步基础版</strong></span>
           <span class="settings-status-item"><span class="settings-status-label">设备标识</span><strong id="syncDeviceIdValue">-</strong></span>
           <span class="settings-status-item"><span class="settings-status-label">最近备份</span><strong id="syncLastBackupValue">从未备份</strong></span>
-          <span class="settings-status-item"><span class="settings-status-label">最近导入</span><strong id="syncLastImportValue">从未导入</strong></span>
+          <span class="settings-status-item"><span class="settings-status-label">最近导入 / 同步</span><strong id="syncLastImportValue">从未导入</strong></span>
           <span class="settings-status-item"><span class="settings-status-label">自动同步</span><strong id="syncAutoStatusValue">未启用</strong></span>
         </div>
 
@@ -125,12 +130,13 @@
             <div class="settings-card settings-offline-card">
               <div class="settings-row settings-row-stackable">
                 <div>
-                  <span class="settings-label">普通数据备份</span>
-                  <p class="settings-row-desc">导出或导入标准 JSON 数据文件，适合本地迁移和手动备份。普通导出不会包含 WebDAV 密码或 GitHub Token。</p>
+                  <span class="settings-label">完整数据备份</span>
+                  <p class="settings-row-desc">完整备份保留空间图标、布局、排序和同步元数据，但不会包含 WebDAV 地址、账号、密码、GitHub Token 或同步加密密码。</p>
                 </div>
-                <div class="settings-actions settings-actions-inline">
-                  <button id="offlineExportBtn" class="primary-button" type="button">导出数据</button>
-                  <button id="offlineImportBtn" class="secondary-button" type="button">导入数据</button>
+                <div class="settings-actions settings-actions-inline settings-backup-actions">
+                  <button id="offlineExportBtn" class="primary-button" type="button">导出完整备份</button>
+                  <button id="offlineImportBtn" class="secondary-button" type="button">导入备份</button>
+                  <button id="exportTabTabBtn" class="secondary-button" type="button">导出 TabTab 格式</button>
                 </div>
               </div>
               <div class="settings-row">
@@ -148,7 +154,7 @@
           <section class="settings-section">
             <div class="settings-section-head">
               <h2 class="settings-section-title">远程同步</h2>
-              <button id="saveSyncSettingsBtn" class="secondary-button" type="button">保存同步配置</button>
+              <button id="saveSyncSettingsBtn" class="primary-button" type="button">保存同步配置</button>
             </div>
             <div class="sync-card-list">
               <article class="settings-card sync-provider-card">
@@ -178,7 +184,7 @@
                   <span class="settings-label">同步方式</span>
                   <div class="settings-actions settings-actions-inline">
                     <button id="gistUploadSyncBtn" class="secondary-button" type="button">本地推送到远程</button>
-                    <button id="gistDownloadSyncBtn" class="secondary-button" type="button">远程覆盖本地</button>
+                    <button id="gistDownloadSyncBtn" class="secondary-button" type="button">合并远程数据</button>
                   </div>
                 </div>
                 <div class="settings-row">
@@ -225,7 +231,7 @@
                   <span class="settings-label">同步方式</span>
                   <div class="settings-actions settings-actions-inline">
                     <button id="webdavUploadSyncBtn" class="secondary-button" type="button">本地推送到远程</button>
-                    <button id="webdavDownloadSyncBtn" class="secondary-button" type="button">远程覆盖本地</button>
+                    <button id="webdavDownloadSyncBtn" class="secondary-button" type="button">合并远程数据</button>
                   </div>
                 </div>
                 <div class="settings-row">
@@ -254,7 +260,7 @@
     <aside class="tabs-panel" aria-label="当前窗口标签页">
       <header class="tabs-header">
         <div>
-          <div id="tabsTitle" class="tabs-title">Tabs (0)</div>
+          <div id="tabsTitle" class="tabs-title">标签 (0)</div>
           <div class="tabs-subtitle">当前窗口</div>
         </div>
 

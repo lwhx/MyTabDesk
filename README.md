@@ -11,7 +11,8 @@ MyTabDesk 是一个本地优先的浏览器新标签页工作台扩展，用来�
 - 当前窗口标签页读取、搜索和保存
 - 深色模式、左栏折叠、右栏折叠
 - 批量删除链接
-- JSON 数据导入和导出
+- 完整原生备份导入和导出
+- TabTab 兼容导出与导入
 - AES-GCM 加密备份导入和导出
 - WebDAV / GitHub Gist 手动同步和自动同步
 - 右键菜单快速保存页面或链接
@@ -49,7 +50,7 @@ MyTabDesk 是一个本地优先的浏览器新标签页工作台扩展，用来�
 
 ## 数据与隐私
 
-所有工作台数据默认保存在 `chrome.storage.local` 中。普通导出文件会剔除 WebDAV 密码和 GitHub Token；如果需要迁移完整同步凭据，请使用加密备份并妥善保管密码。
+所有工作台数据默认保存在 `chrome.storage.local` 中。完整原生备份会保留空间图标、布局、排序、更新时间和删除墓碑；TabTab 兼容导出只保留可见的空间、分组和链接。所有备份（包括加密备份）都会剔除 WebDAV 地址、账号、密码、GitHub Token 和同步加密密码，远程连接信息需要在新设备上重新填写。
 
 如果启用远程同步，远程地址、账号或访问令牌只应保存在本地浏览器扩展存储中，不应写入代码仓库或公开文档。
 
@@ -57,22 +58,24 @@ MyTabDesk 是一个本地优先的浏览器新标签页工作台扩展，用来�
 
 项目不依赖构建工具，可以直接作为浏览器扩展加载。
 
-运行核心逻辑测试：
+运行核心逻辑、浏览器消息、同步网络、传输和界面文案测试：
 
 ```powershell
 npm.cmd test
 ```
 
-等价命令：
+运行真实 Chromium 扩展端到端测试：
 
 ```powershell
-node tests/tabdesk-core.test.js
+npm.cmd run test:e2e
 ```
 
-运行 lint：
+端到端测试会构建 `dist/MyTabDesk-Chrome`，真实加载扩展，验证页面初始化、空间创建、Service Worker 消息保存、`chrome.storage.local` 持久化和刷新恢复。首次运行若本机没有 Chromium，请执行 `npx playwright install chromium`；也可通过 `MYTABDESK_CHROMIUM_EXECUTABLE` 指定浏览器路径。
+
+运行全部质量门禁：
 
 ```powershell
-npm.cmd run lint
+npm.cmd run verify
 ```
 
 ## 项目结构
@@ -81,7 +84,12 @@ npm.cmd run lint
 MyTabDesk/
 ├── assets/
 ├── tests/
-│   └── tabdesk-core.test.js
+│   ├── tabdesk-core.test.js
+│   ├── browser-messaging.test.js
+│   ├── sync-network.test.js
+│   ├── sync-transport.test.js
+│   ├── ui-copy.test.js
+│   └── browser-extension.e2e.js
 ├── background.js
 ├── jsconfig.json
 ├── manifest.json
@@ -91,6 +99,8 @@ MyTabDesk/
 ├── newtab-main.js
 ├── newtab-notifications.js
 ├── newtab-render.js
+├── newtab-sync-network.js
+├── newtab-sync-transport.js
 ├── newtab-sync.js
 ├── newtab-utils.js
 ├── newtab.html
@@ -102,7 +112,6 @@ MyTabDesk/
 
 ## 后续计划
 
-- 补充新标签页关键路径的端到端测试
 - 增强右键保存时的目标空间/分组选择体验
 - 改进同步冲突处理和状态提示
 - 逐步把全局脚本模块迁移到 ES Modules

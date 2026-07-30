@@ -196,6 +196,7 @@ function normalizeData(rawData) {
         gistFilename: getPathValue(rawData, "settings.sync.gistFilename", DEFAULT_SYNC_SETTINGS.gistFilename),
         gistAutoSyncEnabled: Boolean(getPathValue(rawData, "settings.sync.gistAutoSyncEnabled", false)),
         syncEncryptionPassword: getPathValue(rawData, "settings.sync.syncEncryptionPassword", DEFAULT_SYNC_SETTINGS.syncEncryptionPassword),
+        stateUpdatedAt: getPathValue(rawData, "settings.sync.stateUpdatedAt", DEFAULT_SYNC_SETTINGS.stateUpdatedAt),
         autoSyncPendingAt: getPathValue(rawData, "settings.sync.autoSyncPendingAt", DEFAULT_SYNC_SETTINGS.autoSyncPendingAt),
         lastAutoSyncAt: getPathValue(rawData, "settings.sync.lastAutoSyncAt", DEFAULT_SYNC_SETTINGS.lastAutoSyncAt),
         lastAutoSyncError: getPathValue(rawData, "settings.sync.lastAutoSyncError", DEFAULT_SYNC_SETTINGS.lastAutoSyncError),

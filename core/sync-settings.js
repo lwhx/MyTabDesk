@@ -184,6 +184,7 @@ function ensureSyncSettings(data, deviceId) {
     gistFilename: nextData.settings.sync.gistFilename || DEFAULT_SYNC_SETTINGS.gistFilename,
     gistAutoSyncEnabled: Boolean(nextData.settings.sync.gistAutoSyncEnabled),
     syncEncryptionPassword: nextData.settings.sync.syncEncryptionPassword || DEFAULT_SYNC_SETTINGS.syncEncryptionPassword,
+    stateUpdatedAt: typeof nextData.settings.sync.stateUpdatedAt === "number" ? nextData.settings.sync.stateUpdatedAt : DEFAULT_SYNC_SETTINGS.stateUpdatedAt,
     autoSyncPendingAt: typeof nextData.settings.sync.autoSyncPendingAt === "number" ? nextData.settings.sync.autoSyncPendingAt : DEFAULT_SYNC_SETTINGS.autoSyncPendingAt,
     lastAutoSyncAt: typeof nextData.settings.sync.lastAutoSyncAt === "number" ? nextData.settings.sync.lastAutoSyncAt : DEFAULT_SYNC_SETTINGS.lastAutoSyncAt,
     lastAutoSyncError: nextData.settings.sync.lastAutoSyncError || DEFAULT_SYNC_SETTINGS.lastAutoSyncError,
@@ -191,6 +192,22 @@ function ensureSyncSettings(data, deviceId) {
   };
 
   return nextData;
+}
+
+/**
+ * 推进同步运行状态版本。即使同一毫秒内连续更新，也保证版本严格递增。
+ *
+ * @param {object} sync 同步设置对象。
+ * @param {number} [timestamp] 候选时间戳。
+ * @returns {number} 更新后的状态版本。
+ */
+function touchSyncState(sync, timestamp = Date.now()) {
+  if (!sync) {
+    return 0;
+  }
+
+  sync.stateUpdatedAt = Math.max(Number(sync.stateUpdatedAt || 0) + 1, Number(timestamp || 0));
+  return sync.stateUpdatedAt;
 }
 
 /**
@@ -247,6 +264,7 @@ function getDataUpdatedAt(data) {
   getAutoSyncProviders,
   isMyTabDeskGist,
   ensureSyncSettings,
+  touchSyncState,
   getDataUpdatedAt
   };
 });

@@ -4,7 +4,9 @@
   "description": "本地优先的浏览器新标签页工作台扩展",
   "private": true,
   "scripts": {
-    "test": "node tests/tabdesk-core.test.js && node tests/browser-messaging.test.js && node tests/sync-network.test.js && node tests/sync-transport.test.js",
+    "test": "node tests/tabdesk-core.test.js && node tests/browser-messaging.test.js && node tests/sync-network.test.js && node tests/sync-transport.test.js && node tests/ui-copy.test.js",
+    "test:e2e": "npm run build:dist && node tests/browser-extension.e2e.js",
+    "verify": "npm test && npm run lint && npm run test:e2e && npm run check:dist",
     "lint": "eslint .",
     "build:dist": "node scripts/build-dist.js",
     "check:dist": "node scripts/build-dist.js --check"
@@ -12,6 +14,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.3.0",
-    "globals": "^17.6.0"
+    "globals": "^17.6.0",
+    "playwright": "^1.62.0"
   }
 }

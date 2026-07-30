@@ -45,6 +45,7 @@ const DEFAULT_SYNC_SETTINGS = {
   gistFilename: "mytabdesk-sync.json",
   gistAutoSyncEnabled: false,
   syncEncryptionPassword: "",
+  stateUpdatedAt: 0,
   autoSyncPendingAt: 0,
   lastAutoSyncAt: 0,
   lastAutoSyncError: "",

@@ -154,6 +154,7 @@ function bindEvents() {
   safeAddEventListener(elements.settingsBtn, "click", root.MyTabDeskActions.openSettings);
   safeAddEventListener(elements.offlineExportBtn, "click", root.MyTabDeskActions.exportCurrentData);
   safeAddEventListener(elements.offlineImportBtn, "click", root.MyTabDeskActions.requestImportData);
+  safeAddEventListener(elements.exportTabTabBtn, "click", root.MyTabDeskActions.exportTabTabData);
   safeAddEventListener(elements.exportEncryptedBtn, "click", root.MyTabDeskActions.handleExportEncryptedBackup);
   safeAddEventListener(elements.importEncryptedBtn, "click", root.MyTabDeskActions.requestImportEncryptedBackup);
   safeAddEventListener(elements.saveSyncSettingsBtn, "click", root.MyTabDeskSync.handleSaveSyncSettings);
@@ -304,6 +305,7 @@ function bindElements() {
   elements.settingsView = getElement("settingsView");
   elements.offlineExportBtn = getElement("offlineExportBtn");
   elements.offlineImportBtn = getElement("offlineImportBtn");
+  elements.exportTabTabBtn = getElement("exportTabTabBtn");
   elements.backupPasswordInput = getElement("backupPasswordInput");
   elements.exportEncryptedBtn = getElement("exportEncryptedBtn");
   elements.importEncryptedBtn = getElement("importEncryptedBtn");

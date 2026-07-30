@@ -29,6 +29,7 @@ const {
   getAutoSyncProviders,
   isMyTabDeskGist,
   ensureSyncSettings,
+  touchSyncState,
   getDataUpdatedAt,
   mergeLinks,
   mergeWorkspaceData,
@@ -37,6 +38,7 @@ const {
   xorEncrypt,
   detectImportConflict,
   exportData,
+  exportNativeBackup,
   exportSyncData,
   importSyncData,
   importData,
@@ -573,6 +575,19 @@ function testEnsureSyncSettingsKeepsAutoSyncOptions() {
 }
 
 /**
+ * 测试同步状态版本在同一毫秒内仍保持单调递增。
+ *
+ * @returns {void}
+ */
+function testTouchSyncStateIsMonotonic() {
+  const sync = { stateUpdatedAt: 200 };
+
+  assert.equal(touchSyncState(sync, 200), 201);
+  assert.equal(sync.stateUpdatedAt, 201);
+  assert.equal(touchSyncState(sync, 150), 202);
+}
+
+/**
  * 测试全量数据更新时间会取空间和分组更新时间的最大值。
  *
  * @returns {void}
@@ -775,7 +790,16 @@ async function testEncryptedBackupRoundTrip() {
         ]
       }
     ],
-    settings: {}
+    settings: {
+      sync: {
+        webdavUrl: "https://alice:url-secret@example.com/private/?token=query-secret",
+        webdavUsername: "alice@example.com",
+        webdavPassword: "webdav-secret",
+        webdavFilename: "sync.json?access_token=filename-secret",
+        gistToken: "gist-secret",
+        syncEncryptionPassword: "sync-secret"
+      }
+    }
   });
 
   /** 加密备份文本。 */
@@ -797,6 +821,13 @@ async function testEncryptedBackupRoundTrip() {
   /** 恢复后的工作台数据。 */
   const restoredData = await restoreEncryptedBackup(backupText, "secret");
   assert.equal(restoredData.spaces[0].groups[0].links[0].url, "https://example.com");
+  const restoredText = JSON.stringify(restoredData);
+  for (const secret of ["url-secret", "query-secret", "alice@example.com", "webdav-secret", "filename-secret", "gist-secret", "sync-secret"]) {
+    assert.equal(restoredText.includes(secret), false);
+  }
+  assert.equal(restoredData.settings.sync.webdavUrl, "");
+  assert.equal(restoredData.settings.sync.webdavUsername, "");
+  assert.equal(restoredData.settings.sync.webdavFilename, "");
 }
 
 /**
@@ -1105,6 +1136,78 @@ function testSyncDataRoundTripPreservesTombstonesWithoutSecrets() {
   assert.equal(text.includes("secret-webdav"), false);
   assert.equal(text.includes("secret-gist"), false);
   assert.equal(text.includes("secret-encryption"), false);
+}
+
+/**
+ * 测试原生备份完整保留工作台元数据，同时移除同步凭据。
+ *
+ * @returns {void}
+ */
+function testNativeBackupRoundTripPreservesWorkspaceMetadata() {
+  const originalData = normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [{
+      id: "space-a",
+      name: "空间 A",
+      icon: "⭐",
+      createdAt: 10,
+      updatedAt: 20,
+      groups: [{
+        id: "group-a",
+        name: "分组 A",
+        collapsed: true,
+        pinned: true,
+        createdAt: 11,
+        updatedAt: 21,
+        links: [
+          { id: "link-a", title: "A", url: "https://a.example", createdAt: 12, updatedAt: 22, order: 3 },
+          { id: "link-deleted", title: "D", url: "https://d.example", createdAt: 13, updatedAt: 23, deletedAt: 24, order: 4 }
+        ]
+      }]
+    }],
+    settings: {
+      updatedAt: 30,
+      theme: "dark",
+      sidebarCollapsed: true,
+      rightPanelCollapsed: true,
+      compactLinks: true,
+      sync: {
+        deviceId: "device-a",
+        provider: "both",
+        webdavUrl: "https://alice:url-secret@example.com/private/?token=query-secret",
+        webdavUsername: "alice@example.com",
+        webdavPassword: "webdav-secret",
+        webdavFilename: "sync.json?access_token=filename-secret",
+        gistToken: "gist-secret",
+        syncEncryptionPassword: "sync-secret"
+      }
+    }
+  });
+
+  const backupText = exportNativeBackup(originalData);
+  const backup = JSON.parse(backupText);
+  const restored = importData(backupText);
+
+  assert.equal(backup.format, "mytabdesk-backup");
+  assert.equal(backupText.includes("webdav-secret"), false);
+  assert.equal(backupText.includes("url-secret"), false);
+  assert.equal(backupText.includes("query-secret"), false);
+  assert.equal(backupText.includes("alice@example.com"), false);
+  assert.equal(backupText.includes("filename-secret"), false);
+  assert.equal(backupText.includes("gist-secret"), false);
+  assert.equal(backupText.includes("sync-secret"), false);
+  assert.equal(restored.activeSpaceId, "space-a");
+  assert.equal(restored.spaces[0].icon, "⭐");
+  assert.equal(restored.spaces[0].groups[0].collapsed, true);
+  assert.equal(restored.spaces[0].groups[0].pinned, true);
+  assert.equal(restored.spaces[0].groups[0].links[0].order, 3);
+  assert.equal(restored.spaces[0].groups[0].links[1].deletedAt, 24);
+  assert.equal(restored.settings.theme, "dark");
+  assert.equal(restored.settings.compactLinks, true);
+  assert.equal(restored.settings.sync.webdavUrl, "");
+  assert.equal(restored.settings.sync.webdavUsername, "");
+  assert.equal(restored.settings.sync.webdavFilename, "");
 }
 
 /**
@@ -2326,6 +2429,56 @@ function testMergeWorkspaceDataKeepsNewerSettings() {
 }
 
 /**
+ * 测试同步运行状态使用独立版本时间，避免同 settings 版本的旧页面清掉新同步结果。
+ *
+ * @returns {void}
+ */
+function testMergeWorkspaceDataKeepsNewerSyncRuntimeState() {
+  const baseSpace = { id: "space-a", name: "A", createdAt: 1, updatedAt: 100, groups: [] };
+  const stalePage = normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [baseSpace],
+    settings: {
+      updatedAt: 1000,
+      sync: {
+        deviceId: "device-a",
+        provider: "gist",
+        gistToken: "local-token",
+        gistId: "",
+        stateUpdatedAt: 100,
+        autoSyncPendingAt: 0,
+        lastSyncAt: 0
+      }
+    }
+  });
+  const latestStored = normalizeData({
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [baseSpace],
+    settings: {
+      updatedAt: 1000,
+      sync: {
+        deviceId: "device-a",
+        provider: "gist",
+        gistToken: "local-token",
+        gistId: "gist-latest",
+        stateUpdatedAt: 200,
+        autoSyncPendingAt: 150,
+        lastSyncAt: 180
+      }
+    }
+  });
+
+  const merged = mergeWorkspaceData(stalePage, latestStored, "device-a");
+
+  assert.equal(merged.settings.sync.stateUpdatedAt, 200);
+  assert.equal(merged.settings.sync.gistId, "gist-latest");
+  assert.equal(merged.settings.sync.autoSyncPendingAt, 150);
+  assert.equal(merged.settings.sync.lastSyncAt, 180);
+}
+
+/**
  * 测试合并时链接墓碑（deletedAt）能阻止已删除链接被远端旧数据复活。
  *
  * @returns {void}
@@ -2506,6 +2659,7 @@ async function runTests() {
   testIsMyTabDeskGistRejectsUnrelatedGist();
   testEnsureSyncSettingsAddsDefaults();
   testEnsureSyncSettingsKeepsAutoSyncOptions();
+  testTouchSyncStateIsMonotonic();
   testGetDataUpdatedAtReturnsLatestTimestamp();
   testGetDataUpdatedAtIncludesLinksAndTombstones();
   testNormalizeDataPreservesAllSpaceTombstones();
@@ -2522,6 +2676,7 @@ async function runTests() {
   testExportDataRemovesSyncSecrets();
   testCreateBackupSafeDataRemovesSecrets();
   testSyncDataRoundTripPreservesTombstonesWithoutSecrets();
+  testNativeBackupRoundTripPreservesWorkspaceMetadata();
   testExportImportRoundTripPreservesGroupsAndLinks();
   testImportDataRejectsInvalidText();
   testImportDataReadsPackagedBackup();
@@ -2552,6 +2707,7 @@ async function runTests() {
   await testEncryptedBackupFormatDetection();
   testDetectImportConflictVariousScenarios();
   testMergeWorkspaceDataKeepsNewerSettings();
+  testMergeWorkspaceDataKeepsNewerSyncRuntimeState();
   testMergeRespectsLinkTombstone();
   testMergeRespectsGroupTombstone();
   testMergeRespectsSpaceTombstone();

@@ -328,6 +328,10 @@ function mergeWorkspaceData(localData, remoteData, deviceId) {
   const newerSettings = (normalizedRemoteData.settings.updatedAt || 0) > (normalizedLocalData.settings.updatedAt || 0)
     ? normalizedRemoteData.settings
     : normalizedLocalData.settings;
+  /** 同步运行状态使用独立版本，不能被同 settings 版本的旧页面覆盖。 */
+  const newerSyncState = (normalizedRemoteData.settings.sync.stateUpdatedAt || 0) > (normalizedLocalData.settings.sync.stateUpdatedAt || 0)
+    ? normalizedRemoteData.settings.sync
+    : normalizedLocalData.settings.sync;
   const mergedData = ensureSyncSettings({
     version: Math.max(normalizedLocalData.version || 1, normalizedRemoteData.version || 1),
     activeSpaceId,
@@ -337,6 +341,14 @@ function mergeWorkspaceData(localData, remoteData, deviceId) {
 
   mergedData.settings.sync = {
     ...newerSettings.sync,
+    stateUpdatedAt: newerSyncState.stateUpdatedAt,
+    gistId: newerSyncState.gistId,
+    autoSyncPendingAt: newerSyncState.autoSyncPendingAt,
+    lastAutoSyncAt: newerSyncState.lastAutoSyncAt,
+    lastAutoSyncError: newerSyncState.lastAutoSyncError,
+    lastSyncAt: newerSyncState.lastSyncAt,
+    lastBackupAt: newerSyncState.lastBackupAt,
+    lastImportAt: newerSyncState.lastImportAt,
     // 当前设备身份不跟随其它页面/远端设置变化。
     deviceId: normalizedLocalData.settings.sync.deviceId
   };

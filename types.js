@@ -58,6 +58,7 @@
  * @property {string} gistId - GitHub Gist ID
  * @property {string} gistFilename - Gist 同步文件名
  * @property {boolean} gistAutoSyncEnabled - Gist 自动同步是否启用
+ * @property {number} stateUpdatedAt - 同步运行状态独立版本时间
  * @property {number} autoSyncPendingAt - 待自动同步时间戳
  * @property {number} lastAutoSyncAt - 上次自动同步时间戳
  * @property {string} lastAutoSyncError - 上次自动同步错误信息

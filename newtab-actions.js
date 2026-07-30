@@ -11,6 +11,7 @@ const {
   isValidTabUrl,
   tabsToLinks,
   exportData,
+  exportNativeBackup,
   createVisibleWorkspaceData,
   importData,
   clearAllData,
@@ -32,7 +33,8 @@ const {
   saveData,
   formatDateTime,
   markDirty,
-  markSettingsDirty
+  markSettingsDirty,
+  markSyncStateDirty
 } = root.MyTabDeskUtils;
 const { showAlert, showConfirm, showPrompt } = root.MyTabDeskDialogs;
 
@@ -840,11 +842,25 @@ function downloadTextFile(filename, content) {
 function exportCurrentData() {
   /** 备份文件名。 */
   const filename = `mytabdesk-backup-${formatDateTime(getCurrentTime()).replace(/[: ]/g, "-")}.json`;
-  downloadTextFile(filename, exportData(state.data));
+  downloadTextFile(filename, exportNativeBackup(state.data));
 
   // 显示导出成功通知
   if (root.MyTabDeskNotifications) {
-    root.MyTabDeskNotifications.notifySuccess("导出成功", "数据已导出到文件");
+    root.MyTabDeskNotifications.notifySuccess("导出成功", "完整备份已导出到文件");
+  }
+}
+
+/**
+ * 导出仅用于兼容 TabTab 的可见空间、分组和链接数据。
+ *
+ * @returns {void}
+ */
+function exportTabTabData() {
+  const filename = `mytabdesk-tabtab-${formatDateTime(getCurrentTime()).replace(/[: ]/g, "-")}.json`;
+  downloadTextFile(filename, exportData(state.data));
+
+  if (root.MyTabDeskNotifications) {
+    root.MyTabDeskNotifications.notifySuccess("导出成功", "TabTab 兼容数据已导出");
   }
 }
 
@@ -956,10 +972,12 @@ async function importSelectedFile(event) {
     }
 
     state.data = importedData;
+    state.data.settings.sync.lastImportAt = getCurrentTime();
+    markSyncStateDirty(["lastImportAt"]);
     state.selectedLinkIds.clear();
     state.batchDeleteEnabled = false;
     state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
-    await persistWithDirtySkipSync();
+    await persistWithDirtySkipSync({ replaceStoredData: true });
     root.MyTabDeskRender.renderAll();
     await showAlert("数据导入成功。");
   } catch (error) {
@@ -1358,6 +1376,7 @@ async function handleExportEncryptedBackup() {
     URL.revokeObjectURL(link.href);
 
     state.data.settings.sync.lastBackupAt = getCurrentTime();
+    markSyncStateDirty(["lastBackupAt"]);
     await persistWithDirtySkipSync();
     root.MyTabDeskRender.renderSettingsStatus();
     await showAlert("加密备份已导出。");
@@ -1437,8 +1456,9 @@ async function importEncryptedBackupFile(event) {
 
     state.data = importedData;
     state.data.settings.sync.lastImportAt = getCurrentTime();
+    markSyncStateDirty(["lastImportAt"]);
     state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
-    await persistWithDirtySkipSync();
+    await persistWithDirtySkipSync({ replaceStoredData: true });
     root.MyTabDeskRender.renderAll();
     await showAlert("加密备份已成功导入。");
   } catch (error) {
@@ -1515,6 +1535,7 @@ root.MyTabDeskActions = {
   saveSingleTabToGroup,
   downloadTextFile,
   exportCurrentData,
+  exportTabTabData,
   exportSpace,
   requestImportData,
   requestImportSpace,

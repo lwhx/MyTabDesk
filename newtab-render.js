@@ -54,6 +54,7 @@ function applyLayoutSettings() {
   elements.appShell.classList.toggle("tabs-panel-collapsed", Boolean(settings.rightPanelCollapsed));
   elements.appShell.classList.toggle("compact-links", Boolean(settings.compactLinks));
   elements.appShell.classList.toggle("settings-mode", state.viewMode === "settings");
+  elements.settingsBtn.setAttribute("aria-current", state.viewMode === "settings" ? "page" : "false");
   elements.toggleThemeBtn.textContent = settings.theme === "dark" ? "浅色模式" : "深色模式";
   elements.toggleSidebarBtn.textContent = settings.sidebarCollapsed ? "展开" : "收起";
   elements.toggleTabsPanelBtn.textContent = settings.rightPanelCollapsed ? "展开右栏" : "收起右栏";
@@ -560,7 +561,23 @@ function createGroupElement(group, activeSpace) {
   deleteButton.textContent = "删除";
   deleteButton.addEventListener("click", () => root.MyTabDeskActions.deleteGroup(group.id));
 
-  actions.append(openAllButton, refreshIconsButton, moveWrap, pinButton, deleteButton);
+  /** 低频分组操作菜单。 */
+  const moreMenu = document.createElement("details");
+  moreMenu.className = "group-more-menu";
+  moreMenu.open = state.movingGroupId === group.id;
+  const moreTrigger = document.createElement("summary");
+  moreTrigger.className = "group-more-trigger";
+  moreTrigger.textContent = "更多";
+  moreTrigger.setAttribute("aria-label", `打开分组 ${group.name} 的更多操作`);
+  const morePanel = document.createElement("div");
+  morePanel.className = "group-more-panel";
+  morePanel.setAttribute("role", "menu");
+  for (const button of [refreshIconsButton, moveWrap, pinButton, deleteButton]) {
+    morePanel.appendChild(button);
+  }
+  moreMenu.append(moreTrigger, morePanel);
+
+  actions.append(openAllButton, moreMenu);
   // 折叠态下在分组名右侧展示前几个链接的 favicon 概览，让用户一眼看到组内内容
   const faviconPreview = createGroupFaviconPreview(group);
   header.append(headerInfo, faviconPreview, actions);
@@ -972,8 +989,11 @@ function createLinkActionMenuElement(groupId, link) {
  * @returns {void}
  */
 function renderCurrentTabs() {
-  elements.tabsTitle.textContent = `Tabs (${state.currentTabs.length})`;
+  elements.tabsTitle.textContent = `标签 (${state.currentTabs.length})`;
   clearElement(elements.currentTabsList);
+  const hasCurrentTabs = state.currentTabs.length > 0;
+  elements.tabSearchInput.disabled = !hasCurrentTabs;
+  elements.saveCurrentTabsBtn.disabled = !hasCurrentTabs;
 
   if (!hasChromeTabs()) {
     elements.currentTabsList.appendChild(createTextElement("div", "panel-message", "当前页面未运行在浏览器扩展环境中，无法读取窗口标签页。"));
@@ -981,7 +1001,16 @@ function renderCurrentTabs() {
   }
 
   if (state.currentTabs.length === 0) {
-    elements.currentTabsList.appendChild(createTextElement("div", "panel-message", "当前窗口没有可保存的普通网页标签。"));
+    const emptyState = document.createElement("div");
+    emptyState.className = "tabs-empty-state";
+    const icon = createTextElement("div", "tabs-empty-icon", "↗");
+    icon.setAttribute("aria-hidden", "true");
+    emptyState.append(
+      icon,
+      createTextElement("strong", "tabs-empty-title", "当前窗口暂无可保存标签"),
+      createTextElement("p", "tabs-empty-desc", "打开普通网页后点击刷新，也可以直接把标签拖入左侧分组。")
+    );
+    elements.currentTabsList.appendChild(emptyState);
     return;
   }
 

@@ -6,13 +6,28 @@ const {
   createDefaultData,
   migrateData,
   getCurrentTime,
-  isSyncProviderEnabled
+  isSyncProviderEnabled,
+  touchSyncState
 } = app;
 
 /**
  * 工作台数据脏标记，用于检测数据是否发生变化，避免全量序列化比较。
  */
 let workspaceDirty = false;
+
+/** 可独立参与多页面保存的同步运行状态字段。 */
+const SYNC_RUNTIME_STATE_FIELDS = [
+  "gistId",
+  "autoSyncPendingAt",
+  "lastAutoSyncAt",
+  "lastAutoSyncError",
+  "lastSyncAt",
+  "lastBackupAt",
+  "lastImportAt"
+];
+
+/** 本次保存真正修改的同步运行状态字段；实际版本在持久化锁内推进。 */
+const syncStateDirtyFields = new Set();
 
 /**
  * 同步操作串行锁的 promise 链尾节点。
@@ -41,6 +56,24 @@ function markDirty() {
 function markSettingsDirty() {
   if (state.data && state.data.settings) {
     state.data.settings.updatedAt = getCurrentTime();
+  }
+}
+
+/**
+ * 标记指定同步运行状态字段已变更。版本号延迟到存储事务内生成，避免多页面同毫秒冲突。
+ *
+ * @param {string[]} fields 本次修改的状态字段。
+ * @returns {void}
+ */
+function markSyncStateDirty(fields) {
+  if (!Array.isArray(fields) || fields.length === 0) {
+    throw new TypeError("同步运行状态更新必须声明具体字段");
+  }
+
+  for (const field of fields) {
+    if (SYNC_RUNTIME_STATE_FIELDS.includes(field)) {
+      syncStateDirtyFields.add(field);
+    }
   }
 }
 
@@ -295,6 +328,7 @@ async function saveData(options = {}) {
       const now = getCurrentTime();
       sync.autoSyncPendingAt = now;
       sync.lastAutoSyncError = "";
+      markSyncStateDirty(["autoSyncPendingAt", "lastAutoSyncError"]);
     }
   }
 
@@ -309,14 +343,49 @@ async function saveData(options = {}) {
       if (state.data) {
         const stored = await chrome.storage.local.get(STORAGE_KEY);
         const storedData = stored[STORAGE_KEY];
-        if (storedData) {
+        const syncSettingsPatch = options.syncSettingsPatch && typeof options.syncSettingsPatch === "object"
+          ? options.syncSettingsPatch
+          : null;
+        /** 合并前保存本页面实际修改的状态补丁，避免把缓存中的其它旧字段一起写回。 */
+        const syncStatePatch = {};
+        for (const field of syncStateDirtyFields) {
+          syncStatePatch[field] = state.data.settings.sync[field];
+        }
+        if (storedData && !options.replaceStoredData) {
           state.data = root.MyTabDeskPage.mergeWorkspaceData(state.data, storedData, state.data.settings.sync.deviceId);
+        }
+        if (syncSettingsPatch) {
+          // 同步配置按字段保存：以锁内读取的最新设置为基底，避免旧表单覆盖其它页面的新配置。
+          if (storedData && storedData.settings) {
+            const storedSettings = root.MyTabDeskPage.normalizeData(storedData).settings;
+            const currentDeviceId = state.data.settings.sync.deviceId;
+            state.data.settings = {
+              ...storedSettings,
+              sync: {
+                ...storedSettings.sync,
+                deviceId: currentDeviceId
+              }
+            };
+          }
+          Object.assign(state.data.settings.sync, syncSettingsPatch);
+          const storedSettingsVersion = storedData && storedData.settings
+            ? Number(storedData.settings.updatedAt || 0)
+            : 0;
+          state.data.settings.updatedAt = Math.max(getCurrentTime(), storedSettingsVersion + 1);
+        }
+        if (syncStateDirtyFields.size > 0) {
+          Object.assign(state.data.settings.sync, syncStatePatch);
+          const storedVersion = storedData && storedData.settings && storedData.settings.sync
+            ? Number(storedData.settings.sync.stateUpdatedAt || 0)
+            : 0;
+          touchSyncState(state.data.settings.sync, Math.max(getCurrentTime(), storedVersion + 1));
         }
       }
 
       await chrome.storage.local.set({
         [STORAGE_KEY]: state.data
       });
+      syncStateDirtyFields.clear();
     });
   } catch (error) {
     console.error("数据保存失败:", error);
@@ -633,6 +702,7 @@ root.MyTabDeskUtils = {
   getCurrentTime,
   markDirty,
   markSettingsDirty,
+  markSyncStateDirty,
   isSafeFaviconUrl,
   withSyncLock,
   withStorageLock,
