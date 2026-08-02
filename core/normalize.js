@@ -11,6 +11,13 @@
 })(typeof globalThis !== "undefined" ? globalThis : this, function (constants, ids) {
   const { DEFAULT_SYNC_SETTINGS, DEFAULT_SPACE_ID } = constants;
   const { getDefaultSpaceIcon, getCurrentTime, getPathValue, createId, createDeviceId } = ids;
+
+const ALLOWED_ITEM_COLORS = new Set(["", "red", "orange", "yellow", "green", "blue", "purple", "grey"]);
+
+function normalizeColor(color) {
+  const value = typeof color === "string" ? color.toLowerCase() : "";
+  return ALLOWED_ITEM_COLORS.has(value) ? value : "";
+}
 /**
  * 创建默认数据结构。
  *
@@ -39,6 +46,12 @@ function createDefaultData() {
       rightPanelCollapsed: false,
       sidebarCollapsed: false,
       compactLinks: false,
+      scheduledSave: {
+        enabled: false,
+        time: "09:00",
+        spaceId: DEFAULT_SPACE_ID,
+        groupId: ""
+      },
       sync: {
         ...DEFAULT_SYNC_SETTINGS,
         deviceId: createDeviceId()
@@ -83,13 +96,19 @@ function normalizeLink(link) {
     title: link && link.title ? link.title : link && link.url ? link.url : "未命名链接",
     url: link && link.url ? link.url : "",
     favIconUrl: link && link.favIconUrl ? link.favIconUrl : "",
+    note: link && typeof link.note === "string" ? link.note : "",
+    color: normalizeColor(link && link.color),
+    healthStatus: link && typeof link.healthStatus === "string" ? link.healthStatus : "",
+    healthCode: link && Number.isFinite(link.healthCode) ? link.healthCode : 0,
+    healthCheckedAt: link && Number.isFinite(link.healthCheckedAt) ? link.healthCheckedAt : 0,
     createdAt: link && link.createdAt ? link.createdAt : now,
     // 旧数据完全缺失版本时间时使用 0，不能用迁移时当前时间伪装成最新修改。
     updatedAt: link && link.updatedAt ? link.updatedAt : link && link.createdAt ? link.createdAt : 0,
     // order 缺失时回落到 createdAt，保证旧数据合并排序行为与历史完全一致
     order: link && typeof link.order === "number" ? link.order : link && link.createdAt ? link.createdAt : now,
     // 保留删除墓碑字段，用于跨设备同步时阻止已删除链接被旧远端数据复活
-    deletedAt: link && link.deletedAt ? link.deletedAt : undefined
+    deletedAt: link && link.deletedAt ? link.deletedAt : undefined,
+    purgedAt: link && link.purgedAt ? link.purgedAt : undefined
   };
 }
 
@@ -110,10 +129,12 @@ function normalizeGroup(group) {
     name: group && group.name ? group.name : "未命名分组",
     collapsed: Boolean(group && group.collapsed),
     pinned: Boolean(group && group.pinned),
+    color: normalizeColor(group && group.color),
     links: rawLinks.map(normalizeLink).filter((link) => Boolean(link.url)),
     createdAt: group && group.createdAt ? group.createdAt : now,
     updatedAt: group && group.updatedAt ? group.updatedAt : group && group.createdAt ? group.createdAt : 0,
-    deletedAt: group && group.deletedAt ? group.deletedAt : undefined
+    deletedAt: group && group.deletedAt ? group.deletedAt : undefined,
+    purgedAt: group && group.purgedAt ? group.purgedAt : undefined
   };
 }
 
@@ -136,7 +157,84 @@ function normalizeSpace(space) {
     groups: rawGroups.map(normalizeGroup),
     createdAt: space && space.createdAt ? space.createdAt : now,
     updatedAt: space && space.updatedAt ? space.updatedAt : space && space.createdAt ? space.createdAt : 0,
-    deletedAt: space && space.deletedAt ? space.deletedAt : undefined
+    deletedAt: space && space.deletedAt ? space.deletedAt : undefined,
+    purgedAt: space && space.purgedAt ? space.purgedAt : undefined
+  };
+}
+
+/**
+ * 标准化模板链接数据，只保留模板所需的展示字段。
+ *
+ * @param {object} link 原始链接数据。
+ * @returns {object} 标准化后的模板链接数据。
+ */
+function normalizeTemplateLink(link) {
+  return {
+    title: link && link.title ? link.title : link && link.url ? link.url : "未命名链接",
+    url: link && link.url ? link.url : "",
+    favIconUrl: link && link.favIconUrl ? link.favIconUrl : "",
+    note: link && typeof link.note === "string" ? link.note : "",
+    color: normalizeColor(link && link.color)
+  };
+}
+
+/**
+ * 标准化模板分组数据，只保留名称和链接列表。
+ *
+ * @param {object} group 原始分组数据。
+ * @returns {object} 标准化后的模板分组数据。
+ */
+function normalizeTemplateGroup(group) {
+  /** 原始链接数组，非数组时兜底为空数组。 */
+  const rawLinks = group && Array.isArray(group.links) ? group.links : [];
+
+  return {
+    name: group && group.name ? group.name : "未命名分组",
+    links: rawLinks.map(normalizeTemplateLink).filter((link) => Boolean(link.url))
+  };
+}
+
+/**
+ * 标准化空间模板数据，保证模板结构稳定且不含多余字段。
+ *
+ * 模板结构：{ id, name, icon, groups: [{ name, links: [{ title, url, favIconUrl, note, color }] }] }
+ *
+ * @param {object} template 原始模板数据。
+ * @returns {object} 标准化后的空间模板。
+ */
+function normalizeSpaceTemplate(template) {
+  /** 原始分组数组，非数组时兜底为空数组。 */
+  const rawGroups = template && Array.isArray(template.groups) ? template.groups : [];
+
+  return {
+    id: template && template.id ? template.id : createId("template"),
+    name: template && template.name ? template.name : "未命名模板",
+    icon: template && template.icon && template.icon !== "folder" ? template.icon : getDefaultSpaceIcon(),
+    groups: rawGroups.map(normalizeTemplateGroup)
+  };
+}
+
+/**
+ * 标准化定时自动保存配置，保留合法的 HH:MM 时间格式和有效空间 ID。
+ *
+ * @param {object} rawData 原始全量数据。
+ * @param {Array<object>} liveSpaces 当前未被删除的空间列表，用于校验 spaceId。
+ * @returns {object} 标准化后的定时保存配置。
+ */
+function normalizeScheduledSave(rawData, liveSpaces) {
+  const raw = getPathValue(rawData, "settings.scheduledSave", {});
+  const fallbackSpaceId = liveSpaces.length > 0 ? liveSpaces[0].id : DEFAULT_SPACE_ID;
+  const rawTime = typeof raw.time === "string" ? raw.time : "09:00";
+  const timeIsValid = /^([01]\d|2[0-3]):[0-5]\d$/.test(rawTime);
+  const rawSpaceId = typeof raw.spaceId === "string" && raw.spaceId
+    ? raw.spaceId
+    : fallbackSpaceId;
+  const spaceStillExists = liveSpaces.some((space) => space.id === rawSpaceId);
+  return {
+    enabled: Boolean(raw.enabled),
+    time: timeIsValid ? rawTime : "09:00",
+    spaceId: spaceStillExists ? rawSpaceId : fallbackSpaceId,
+    groupId: typeof raw.groupId === "string" ? raw.groupId : ""
   };
 }
 
@@ -179,6 +277,10 @@ function normalizeData(rawData) {
       rightPanelCollapsed: getPathValue(rawData, "settings.rightPanelCollapsed", false),
       sidebarCollapsed: getPathValue(rawData, "settings.sidebarCollapsed", false),
       compactLinks: Boolean(getPathValue(rawData, "settings.compactLinks", false)),
+      scheduledSave: normalizeScheduledSave(rawData, liveSpaces),
+      spaceTemplates: Array.isArray(getPathValue(rawData, "settings.spaceTemplates", []))
+        ? getPathValue(rawData, "settings.spaceTemplates", []).map(normalizeSpaceTemplate)
+        : [],
       sync: {
         deviceId: getPathValue(rawData, "settings.sync.deviceId", ""),
         deviceName: getPathValue(rawData, "settings.sync.deviceName", DEFAULT_SYNC_SETTINGS.deviceName),
@@ -230,6 +332,8 @@ function migrateData(data) {
   return {
     createDefaultData,
     createUniqueDefaultSpace,
+  normalizeColor,
+  normalizeSpaceTemplate,
   normalizeLink,
   normalizeGroup,
   normalizeSpace,

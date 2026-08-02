@@ -9,8 +9,8 @@
     root.MyTabDeskCoreReorder = factory(root.MyTabDeskCoreIds, root.MyTabDeskCoreNormalize);
   }
 })(typeof globalThis !== "undefined" ? globalThis : this, function (ids, normalize) {
-  const { getCurrentTime } = ids;
-  const { normalizeLink, normalizeData } = normalize;
+  const { getCurrentTime, getDefaultSpaceIcon, createId } = ids;
+  const { normalizeColor, normalizeLink, normalizeData } = normalize;
 /**
  * 移动数组中的单个元素。
  *
@@ -154,10 +154,14 @@ function updateLink(data, spaceId, groupId, linkId, patch) {
   const nextTitle = String(patch && patch.title ? patch.title : "").trim();
   /** 去除前后空格后的图标地址。 */
   const nextFavIconUrl = String(patch && patch.favIconUrl ? patch.favIconUrl : "").trim();
+  /** 去除前后空格后的用户备注。 */
+  const nextNote = String(patch && typeof patch.note === "string" ? patch.note : link.note || "").trim();
 
   link.title = nextTitle || nextUrl;
   link.url = nextUrl;
   link.favIconUrl = nextFavIconUrl;
+  link.note = nextNote;
+  link.color = normalizeColor(patch && patch.color !== undefined ? patch.color : link.color);
   link.updatedAt = getCurrentTime();
   group.updatedAt = getCurrentTime();
   space.updatedAt = getCurrentTime();
@@ -343,6 +347,109 @@ function addLinksToGroup(data, spaceId, groupId, rawLinks) {
   return nextData;
 }
 
+function normalizeUrlForDuplicateCheck(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    url.hash = "";
+    url.hostname = url.hostname.toLowerCase();
+    if (url.pathname !== "/") url.pathname = url.pathname.replace(/\/+$/, "");
+    return url.toString();
+  } catch {
+    return String(rawUrl || "").trim();
+  }
+}
+
+function findDuplicateLinks(data, options = {}) {
+  const normalized = normalizeData(data);
+  const entriesByUrl = new Map();
+  for (const space of normalized.spaces) {
+    if (space.deletedAt || (options.spaceId && space.id !== options.spaceId)) continue;
+    for (const group of space.groups) {
+      if (group.deletedAt) continue;
+      for (const link of group.links) {
+        if (link.deletedAt || !link.url) continue;
+        const normalizedUrl = normalizeUrlForDuplicateCheck(link.url);
+        const entry = { spaceId: space.id, groupId: group.id, linkId: link.id, link };
+        if (!entriesByUrl.has(normalizedUrl)) entriesByUrl.set(normalizedUrl, []);
+        entriesByUrl.get(normalizedUrl).push(entry);
+      }
+    }
+  }
+
+  return Array.from(entriesByUrl.entries()).flatMap(([normalizedUrl, entries]) => {
+    if (entries.length < 2) return [];
+    const sorted = entries.sort((a, b) => (
+      (b.link.updatedAt || b.link.createdAt || 0) - (a.link.updatedAt || a.link.createdAt || 0)
+    ));
+    return [{ normalizedUrl, keep: sorted[0], duplicates: sorted.slice(1) }];
+  });
+}
+
+function deduplicateLinks(data, options = {}) {
+  const nextData = normalizeData(data);
+  const duplicates = findDuplicateLinks(nextData, options);
+  const deletedAt = getCurrentTime();
+  let removedCount = 0;
+  for (const duplicateGroup of duplicates) {
+    for (const duplicate of duplicateGroup.duplicates) {
+      const space = nextData.spaces.find((item) => item.id === duplicate.spaceId);
+      const group = space && space.groups.find((item) => item.id === duplicate.groupId);
+      const link = group && group.links.find((item) => item.id === duplicate.linkId);
+      if (!link || link.deletedAt) continue;
+      link.deletedAt = deletedAt;
+      link.updatedAt = deletedAt;
+      group.updatedAt = deletedAt;
+      space.updatedAt = deletedAt;
+      removedCount += 1;
+    }
+  }
+  return { data: nextData, duplicates, removedCount };
+}
+
+function createSpaceFromTemplate(data, template, name, icon) {
+  const nextData = normalizeData(data);
+  const now = getCurrentTime();
+  const spaceName = (typeof name === "string" && name.trim()) || (template && template.name) || "从模板创建";
+  const spaceIcon = (typeof icon === "string" && icon) || (template && template.icon) || getDefaultSpaceIcon();
+  const newSpace = {
+    id: createId("space"),
+    name: spaceName,
+    icon: spaceIcon,
+    groups: [],
+    createdAt: now,
+    updatedAt: now
+  };
+  const templateGroups = template && Array.isArray(template.groups) ? template.groups : [];
+  for (const templateGroup of templateGroups) {
+    const group = {
+      id: createId("group"),
+      name: templateGroup.name || "未命名分组",
+      collapsed: false,
+      pinned: false,
+      links: [],
+      createdAt: now,
+      updatedAt: now
+    };
+    const templateLinks = Array.isArray(templateGroup.links) ? templateGroup.links : [];
+    for (const templateLink of templateLinks) {
+      group.links.push({
+        id: createId("link"),
+        title: templateLink.title || templateLink.url || "未命名链接",
+        url: templateLink.url || "",
+        favIconUrl: templateLink.favIconUrl || "",
+        note: templateLink.note || "",
+        color: normalizeColor(templateLink.color),
+        createdAt: now,
+        updatedAt: 0
+      });
+    }
+    newSpace.groups.push(group);
+  }
+  nextData.spaces.push(newSpace);
+  nextData.activeSpaceId = newSpace.id;
+  return nextData;
+}
+
   return {
     moveArrayItem,
   reorderSpaces,
@@ -351,6 +458,10 @@ function addLinksToGroup(data, spaceId, groupId, rawLinks) {
   updateLink,
   moveGroupBetweenSpaces,
   moveLinkBetweenGroups,
-  addLinksToGroup
+  addLinksToGroup,
+  normalizeUrlForDuplicateCheck,
+  findDuplicateLinks,
+  deduplicateLinks,
+  createSpaceFromTemplate
   };
 });

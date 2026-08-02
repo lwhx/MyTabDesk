@@ -110,7 +110,9 @@ function bindEvents() {
   });
   safeAddEventListener(elements.createBlankSpaceBtn, "click", root.MyTabDeskActions.createBlankSpaceFromMenu);
   safeAddEventListener(elements.importSpaceBtn, "click", root.MyTabDeskActions.requestImportSpace);
-  safeAddEventListener(elements.importBookmarksBtn, "click", root.MyTabDeskActions.showBookmarksImportPlaceholder);
+  safeAddEventListener(elements.importBookmarksBtn, "click", root.MyTabDeskActions.importBrowserBookmarks);
+  safeAddEventListener(elements.createFromTemplateBtn, "click", root.MyTabDeskActions.createSpaceFromSelectedTemplate);
+  safeAddEventListener(elements.saveCurrentSpaceTemplateBtn, "click", root.MyTabDeskActions.saveCurrentSpaceAsTemplate);
   safeAddEventListener(elements.closeSpaceIconDialogBtn, "click", root.MyTabDeskRender.closeSpaceIconPicker);
   safeAddEventListener(elements.cancelSpaceIconBtn, "click", root.MyTabDeskRender.closeSpaceIconPicker);
   safeAddEventListener(elements.confirmSpaceIconBtn, "click", root.MyTabDeskRender.confirmSpaceIconChange);
@@ -143,15 +145,52 @@ function bindEvents() {
   safeAddEventListener(elements.createGroupBtn, "click", root.MyTabDeskActions.createGroup);
   safeAddEventListener(elements.refreshTabsBtn, "click", root.MyTabDeskActions.refreshCurrentTabs);
   safeAddEventListener(elements.saveCurrentTabsBtn, "click", root.MyTabDeskActions.saveCurrentTabsToGroup);
+  safeAddEventListener(elements.saveAndCloseTabsBtn, "click", root.MyTabDeskActions.saveCurrentTabsAndClose);
+  safeAddEventListener(elements.saveAndDiscardTabsBtn, "click", root.MyTabDeskActions.saveCurrentTabsAndDiscard);
+  safeAddEventListener(elements.organizeIdleTabsBtn, "click", root.MyTabDeskLifecycle.organizeIdleTabs);
+  safeAddEventListener(elements.saveLifecycleConfigBtn, "click", root.MyTabDeskLifecycle.saveLifecycleConfig);
+  safeAddEventListener(elements.saveScheduledSaveConfigBtn, "click", root.MyTabDeskActions.saveScheduledSaveConfig);
+  safeAddEventListener(elements.aiGroupLinksBtn, "click", root.MyTabDeskAiGrouping.runGrouping);
+  safeAddEventListener(elements.saveAiGroupingConfigBtn, "click", async () => {
+    try {
+      await root.MyTabDeskAiGrouping.saveConfigFromForm();
+    } catch (error) {
+      await root.MyTabDeskDialogs.showAlert(error.message || "AI 配置保存失败。", "AI 分组");
+    }
+  });
+  safeAddEventListener(elements.cancelAiGroupingBtn, "click", root.MyTabDeskAiGrouping.closePreview);
+  safeAddEventListener(elements.confirmAiGroupingBtn, "click", root.MyTabDeskAiGrouping.confirmGrouping);
+  safeAddEventListener(elements.cacheFaviconsBtn, "click", async () => {
+    const space = root.MyTabDeskUtils.getActiveSpace();
+    const links = space.groups.filter((group) => !group.deletedAt).flatMap((group) => group.links.filter((link) => !link.deletedAt));
+    const result = await root.MyTabDeskFaviconCache.cacheLinks(links);
+    root.MyTabDeskRender.renderAll();
+    root.MyTabDeskNotifications.showToast(`已缓存 ${result.succeeded} 个图标，失败 ${result.failed} 个`, result.failed ? "warning" : "success");
+  });
+  safeAddEventListener(elements.clearFaviconCacheBtn, "click", async () => {
+    await root.MyTabDeskFaviconCache.clearCache();
+    root.MyTabDeskRender.renderAll();
+    root.MyTabDeskNotifications.showToast("图标缓存已清空", "success");
+  });
+  safeAddEventListener(elements.scheduledSaveSpaceSelect, "change", root.MyTabDeskActions.loadScheduledSaveConfigOptions);
   safeAddEventListener(elements.importFileInput, "change", root.MyTabDeskActions.importSelectedFile);
   safeAddEventListener(elements.toggleThemeBtn, "click", root.MyTabDeskActions.toggleTheme);
   safeAddEventListener(elements.toggleSidebarBtn, "click", root.MyTabDeskActions.toggleSidebar);
   safeAddEventListener(elements.toggleTabsPanelBtn, "click", root.MyTabDeskActions.toggleTabsPanel);
   safeAddEventListener(elements.toggleCompactLinksBtn, "click", root.MyTabDeskActions.toggleCompactLinks);
   safeAddEventListener(elements.batchDeleteBtn, "click", root.MyTabDeskActions.toggleBatchDelete);
+  safeAddEventListener(elements.deduplicateLinksBtn, "click", root.MyTabDeskActions.scanAndDeduplicateLinks);
+  safeAddEventListener(elements.checkLinksHealthBtn, "click", root.MyTabDeskHealth.checkActiveSpaceLinks);
+  safeAddEventListener(elements.exportSpaceAsHtmlBtn, "click", root.MyTabDeskActions.exportSpaceAsHtml);
   safeAddEventListener(elements.confirmBatchDeleteBtn, "click", root.MyTabDeskActions.confirmBatchDelete);
   safeAddEventListener(elements.cancelBatchDeleteBtn, "click", root.MyTabDeskActions.toggleBatchDelete);
   safeAddEventListener(elements.settingsBtn, "click", root.MyTabDeskActions.openSettings);
+  safeAddEventListener(elements.sessionsBtn, "click", root.MyTabDeskSessions.openSessionView);
+  safeAddEventListener(elements.trashBtn, "click", root.MyTabDeskTrash.openTrashView);
+  safeAddEventListener(elements.statsBtn, "click", root.MyTabDeskStats.openStatsView);
+  safeAddEventListener(elements.refreshStatsBtn, "click", root.MyTabDeskStats.loadStats);
+  safeAddEventListener(elements.statsTrendRangeSelect, "change", root.MyTabDeskStats.renderStats);
+  safeAddEventListener(elements.emptyTrashBtn, "click", root.MyTabDeskTrash.emptyTrash);
   safeAddEventListener(elements.offlineExportBtn, "click", root.MyTabDeskActions.exportCurrentData);
   safeAddEventListener(elements.offlineImportBtn, "click", root.MyTabDeskActions.requestImportData);
   safeAddEventListener(elements.exportTabTabBtn, "click", root.MyTabDeskActions.exportTabTabData);
@@ -203,6 +242,10 @@ function bindEvents() {
     state.draggedTab = null;
   });
   safeAddEventListener(document, "click", (event) => {
+    const workspaceMoreMenu = event.target.closest(".workspace-more-menu");
+    if (workspaceMoreMenu && event.target.closest(".workspace-menu-action")) {
+      workspaceMoreMenu.removeAttribute("open");
+    }
     if (!event.target.closest(".space-item") && !event.target.closest(".space-menu-panel")) {
       state.openSpaceMenuId = "";
       root.MyTabDeskRender.renderSpaces();
@@ -233,7 +276,7 @@ function bindEvents() {
     }
     event.preventDefault();
     // 设置页下先切回工作台视图，再聚焦（搜索框在 workspaceToolbar 内，settings 下被隐藏）
-    if (state.viewMode === "settings") {
+    if (state.viewMode === "settings" || state.viewMode === "sessions" || state.viewMode === "trash" || state.viewMode === "stats") {
       state.viewMode = "workspace";
       root.MyTabDeskRender.renderAll();
       requestAnimationFrame(() => elements.searchInput.focus());
@@ -263,6 +306,8 @@ function bindElements() {
   elements.editLinkTitleInput = getElement("editLinkTitleInput");
   elements.editLinkUrlInput = getElement("editLinkUrlInput");
   elements.editLinkIconInput = getElement("editLinkIconInput");
+  elements.editLinkNoteInput = getElement("editLinkNoteInput");
+  elements.editLinkColorInput = getElement("editLinkColorInput");
   elements.editLinkError = getElement("editLinkError");
   elements.closeEditLinkDialogBtn = getElement("closeEditLinkDialogBtn");
   elements.cancelEditLinkBtn = getElement("cancelEditLinkBtn");
@@ -274,6 +319,8 @@ function bindElements() {
   elements.createBlankSpaceBtn = getElement("createBlankSpaceBtn");
   elements.importSpaceBtn = getElement("importSpaceBtn");
   elements.importBookmarksBtn = getElement("importBookmarksBtn");
+  elements.createFromTemplateBtn = getElement("createFromTemplateBtn");
+  elements.saveCurrentSpaceTemplateBtn = getElement("saveCurrentSpaceTemplateBtn");
   elements.toggleSidebarBtn = getElement("toggleSidebarBtn");
   elements.spaceList = getElement("spaceList");
   elements.spaceIconDialog = getElement("spaceIconDialog");
@@ -288,6 +335,9 @@ function bindElements() {
   elements.cancelSpaceIconBtn = getElement("cancelSpaceIconBtn");
   elements.confirmSpaceIconBtn = getElement("confirmSpaceIconBtn");
   elements.settingsBtn = getElement("settingsBtn");
+  elements.sessionsBtn = getElement("sessionsBtn");
+  elements.trashBtn = getElement("trashBtn");
+  elements.statsBtn = getElement("statsBtn");
   elements.currentSpaceName = getElement("currentSpaceName");
   elements.currentSpaceMeta = getElement("currentSpaceMeta");
   elements.searchInput = getElement("searchInput");
@@ -295,6 +345,9 @@ function bindElements() {
   elements.toggleTabsPanelBtn = getElement("toggleTabsPanelBtn");
   elements.toggleCompactLinksBtn = getElement("toggleCompactLinksBtn");
   elements.batchDeleteBtn = getElement("batchDeleteBtn");
+  elements.deduplicateLinksBtn = getElement("deduplicateLinksBtn");
+  elements.checkLinksHealthBtn = getElement("checkLinksHealthBtn");
+  elements.exportSpaceAsHtmlBtn = getElement("exportSpaceAsHtmlBtn");
   elements.createGroupBtn = getElement("createGroupBtn");
   elements.batchBar = getElement("batchBar");
   elements.confirmBatchDeleteBtn = getElement("confirmBatchDeleteBtn");
@@ -303,6 +356,20 @@ function bindElements() {
   elements.emptyState = getElement("emptyState");
   elements.workspaceToolbar = getElement("workspaceToolbar");
   elements.settingsView = getElement("settingsView");
+  elements.sessionView = getElement("sessionView");
+  elements.trashView = getElement("trashView");
+  elements.trashList = getElement("trashList");
+  elements.emptyTrashBtn = getElement("emptyTrashBtn");
+  elements.statsView = getElement("statsView");
+  elements.refreshStatsBtn = getElement("refreshStatsBtn");
+  elements.statsSavedToday = getElement("statsSavedToday");
+  elements.statsRestoredToday = getElement("statsRestoredToday");
+  elements.statsDomainsToday = getElement("statsDomainsToday");
+  elements.statsTrackedTabs = getElement("statsTrackedTabs");
+  elements.statsTrendChart = getElement("statsTrendChart");
+  elements.statsTrendRangeSelect = getElement("statsTrendRangeSelect");
+  elements.statsDomainList = getElement("statsDomainList");
+  elements.statsSpaceList = getElement("statsSpaceList");
   elements.offlineExportBtn = getElement("offlineExportBtn");
   elements.offlineImportBtn = getElement("offlineImportBtn");
   elements.exportTabTabBtn = getElement("exportTabTabBtn");
@@ -340,6 +407,31 @@ function bindElements() {
   elements.tabSearchInput = getElement("tabSearchInput");
   elements.refreshTabsBtn = getElement("refreshTabsBtn");
   elements.saveCurrentTabsBtn = getElement("saveCurrentTabsBtn");
+  elements.saveAndCloseTabsBtn = getElement("saveAndCloseTabsBtn");
+  elements.saveAndDiscardTabsBtn = getElement("saveAndDiscardTabsBtn");
+  elements.organizeIdleTabsBtn = getElement("organizeIdleTabsBtn");
+  elements.lifecycleEnabledInput = getElement("lifecycleEnabledInput");
+  elements.lifecycleIdleMinutesInput = getElement("lifecycleIdleMinutesInput");
+  elements.lifecycleAutoSaveHoursInput = getElement("lifecycleAutoSaveHoursInput");
+  elements.lifecycleMaxTabsInput = getElement("lifecycleMaxTabsInput");
+  elements.lifecycleWhitelistInput = getElement("lifecycleWhitelistInput");
+  elements.saveLifecycleConfigBtn = getElement("saveLifecycleConfigBtn");
+  elements.scheduledSaveEnabledInput = getElement("scheduledSaveEnabledInput");
+  elements.scheduledSaveTimeInput = getElement("scheduledSaveTimeInput");
+  elements.scheduledSaveSpaceSelect = getElement("scheduledSaveSpaceSelect");
+  elements.scheduledSaveGroupSelect = getElement("scheduledSaveGroupSelect");
+  elements.saveScheduledSaveConfigBtn = getElement("saveScheduledSaveConfigBtn");
+  elements.aiGroupLinksBtn = getElement("aiGroupLinksBtn");
+  elements.aiGroupingBaseUrlInput = getElement("aiGroupingBaseUrlInput");
+  elements.aiGroupingModelInput = getElement("aiGroupingModelInput");
+  elements.aiGroupingApiKeyInput = getElement("aiGroupingApiKeyInput");
+  elements.saveAiGroupingConfigBtn = getElement("saveAiGroupingConfigBtn");
+  elements.aiGroupingPreviewDialog = getElement("aiGroupingPreviewDialog");
+  elements.aiGroupingPreviewList = getElement("aiGroupingPreviewList");
+  elements.cancelAiGroupingBtn = getElement("cancelAiGroupingBtn");
+  elements.confirmAiGroupingBtn = getElement("confirmAiGroupingBtn");
+  elements.cacheFaviconsBtn = getElement("cacheFaviconsBtn");
+  elements.clearFaviconCacheBtn = getElement("clearFaviconCacheBtn");
   elements.currentTabsList = getElement("currentTabsList");
 }
 
@@ -356,7 +448,13 @@ async function init() {
   state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
   await saveData({ skipAutoSync: true });
   bindEvents();
+  root.MyTabDeskSessions.bindSessionEvents();
+  await root.MyTabDeskTrash.purgeExpiredItems();
+  root.MyTabDeskCommandPalette.bindCommandPalette();
   root.MyTabDeskRender.renderAll();
+  await root.MyTabDeskSessions.loadSessionHistory();
+  await root.MyTabDeskLifecycle.loadLifecycleStatus();
+  await root.MyTabDeskFaviconCache.loadCache();
   root.MyTabDeskSync.scheduleAutoSync();
   await root.MyTabDeskActions.refreshCurrentTabs();
   // state.data 就绪后，消费 background 暂存的右键保存数据

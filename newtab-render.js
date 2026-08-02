@@ -53,8 +53,14 @@ function applyLayoutSettings() {
   elements.appShell.classList.toggle("sidebar-collapsed", Boolean(settings.sidebarCollapsed));
   elements.appShell.classList.toggle("tabs-panel-collapsed", Boolean(settings.rightPanelCollapsed));
   elements.appShell.classList.toggle("compact-links", Boolean(settings.compactLinks));
-  elements.appShell.classList.toggle("settings-mode", state.viewMode === "settings");
+  const isUtilityView = state.viewMode === "settings" || state.viewMode === "sessions" || state.viewMode === "trash" || state.viewMode === "stats";
+  elements.appShell.classList.toggle("settings-mode", isUtilityView);
+  elements.appShell.classList.toggle("sessions-mode", state.viewMode === "sessions");
+  elements.appShell.classList.toggle("trash-mode", state.viewMode === "trash");
   elements.settingsBtn.setAttribute("aria-current", state.viewMode === "settings" ? "page" : "false");
+  elements.sessionsBtn.setAttribute("aria-current", state.viewMode === "sessions" ? "page" : "false");
+  elements.trashBtn.setAttribute("aria-current", state.viewMode === "trash" ? "page" : "false");
+  elements.statsBtn.setAttribute("aria-current", state.viewMode === "stats" ? "page" : "false");
   elements.toggleThemeBtn.textContent = settings.theme === "dark" ? "浅色模式" : "深色模式";
   elements.toggleSidebarBtn.textContent = settings.sidebarCollapsed ? "展开" : "收起";
   elements.toggleTabsPanelBtn.textContent = settings.rightPanelCollapsed ? "展开右栏" : "收起右栏";
@@ -66,13 +72,21 @@ function applyLayoutSettings() {
 
   /** 是否正在显示设置页。 */
   const isSettings = state.viewMode === "settings";
+  const isSessions = state.viewMode === "sessions";
+  const isTrash = state.viewMode === "trash";
+  const isStats = state.viewMode === "stats";
+  const isUtility = isSettings || isSessions || isTrash || isStats;
   elements.createSpaceMenu.hidden = !state.createSpaceMenuOpen;
+  elements.createFromTemplateBtn.hidden = !(state.data.settings.spaceTemplates || []).length;
   elements.createSpaceBtn.setAttribute("aria-expanded", state.createSpaceMenuOpen ? "true" : "false");
-  elements.workspaceToolbar.hidden = isSettings;
-  elements.batchBar.hidden = isSettings || !state.batchDeleteEnabled;
-  elements.groupList.hidden = isSettings;
-  elements.emptyState.hidden = isSettings || elements.emptyState.hidden;
+  elements.workspaceToolbar.hidden = isUtility;
+  elements.batchBar.hidden = isUtility || !state.batchDeleteEnabled;
+  elements.groupList.hidden = isUtility;
+  elements.emptyState.hidden = isUtility || elements.emptyState.hidden;
   elements.settingsView.hidden = !isSettings;
+  elements.sessionView.hidden = !isSessions;
+  elements.trashView.hidden = !isTrash;
+  elements.statsView.hidden = !isStats;
 }
 
 /**
@@ -98,6 +112,21 @@ function renderAll() {
 
     if (state.viewMode === "settings") {
       renderSettingsStatus();
+      return;
+    }
+
+    if (state.viewMode === "sessions") {
+      root.MyTabDeskSessions.renderSessionHistory();
+      return;
+    }
+
+    if (state.viewMode === "trash") {
+      root.MyTabDeskTrash.renderTrash();
+      return;
+    }
+
+    if (state.viewMode === "stats") {
+      root.MyTabDeskStats.renderStats();
       return;
     }
 
@@ -130,7 +159,7 @@ function renderSpaces() {
     item.draggable = true;
     item.dataset.spaceId = space.id;
 
-    if (space.id === state.data.activeSpaceId) {
+    if (space.id === state.data.activeSpaceId && state.viewMode === "workspace") {
       item.classList.add("active");
     }
 
@@ -449,6 +478,19 @@ function createGroupFaviconPreview(group) {
   return preview;
 }
 
+function restoreDraggedTabFromEvent(event) {
+  if (state.draggedTab || !event.dataTransfer) return;
+  try {
+    const raw = event.dataTransfer.getData("application/x-mytabdesk-tab");
+    const tab = raw ? JSON.parse(raw) : null;
+    if (tab && typeof tab.url === "string" && /^https?:\/\//i.test(tab.url)) {
+      state.draggedTab = tab;
+    }
+  } catch {
+    state.draggedTab = null;
+  }
+}
+
 /**
  * 创建单个分组容器。
  *
@@ -460,6 +502,7 @@ function createGroupElement(group, activeSpace) {
   /** 分组容器元素。 */
   const groupElement = document.createElement("section");
   groupElement.className = "group-section";
+  if (group.color) groupElement.classList.add(group.color ? `color-${group.color}` : "");
   groupElement.dataset.groupId = group.id;
   groupElement.draggable = !group.pinned;
 
@@ -572,6 +615,22 @@ function createGroupElement(group, activeSpace) {
   const morePanel = document.createElement("div");
   morePanel.className = "group-more-panel";
   morePanel.setAttribute("role", "menu");
+  const colorPicker = document.createElement("div");
+  colorPicker.className = "group-color-picker";
+  const colorLabels = { "": "无", red: "红", orange: "橙", yellow: "黄", green: "绿", blue: "蓝", purple: "紫", grey: "灰" };
+  for (const [colorValue, colorLabel] of Object.entries(colorLabels)) {
+    const colorButton = document.createElement("button");
+    colorButton.type = "button";
+    colorButton.className = `group-color-option${colorValue ? ` color-${colorValue}` : " color-none"}`;
+    colorButton.title = `${colorLabel}色标记`;
+    colorButton.setAttribute("aria-label", colorButton.title);
+    colorButton.addEventListener("click", (event) => {
+      event.stopPropagation();
+      root.MyTabDeskActions.setGroupColor(group.id, colorValue);
+    });
+    colorPicker.appendChild(colorButton);
+  }
+  morePanel.appendChild(colorPicker);
   for (const button of [refreshIconsButton, moveWrap, pinButton, deleteButton]) {
     morePanel.appendChild(button);
   }
@@ -610,6 +669,7 @@ function createGroupElement(group, activeSpace) {
 
     groupElement.addEventListener("drop", async (event) => {
       event.preventDefault();
+      restoreDraggedTabFromEvent(event);
       groupElement.classList.remove("drag-over");
       try {
         await root.MyTabDeskActions.handleGroupDrop(activeSpace.id, group.id);
@@ -630,6 +690,7 @@ function createGroupElement(group, activeSpace) {
     linkGrid.addEventListener("drop", async (event) => {
       event.preventDefault();
       event.stopPropagation();
+      restoreDraggedTabFromEvent(event);
       linkGrid.classList.remove("drag-over");
       try {
         await root.MyTabDeskActions.handleLinkGridDrop(activeSpace.id, group.id);
@@ -824,6 +885,7 @@ function createLinkElement(groupId, link) {
   /** 链接卡片容器。 */
   const card = document.createElement("article");
   card.className = "link-card";
+  if (link.color) card.classList.add(link.color ? `color-${link.color}` : "");
   card.title = `${link.title}\n${link.url}`;
   card.draggable = true;
   card.dataset.linkId = link.id;
@@ -843,8 +905,22 @@ function createLinkElement(groupId, link) {
   /** 链接标题和地址区域。 */
   const content = document.createElement("div");
   content.className = "link-content";
-  content.append(createTextElement("div", "link-title", link.title || link.url));
+  const titleRow = document.createElement("div");
+  titleRow.className = "link-title-row";
+  titleRow.appendChild(createTextElement("div", "link-title", link.title || link.url));
+  if (link.healthStatus) {
+    const health = document.createElement("i");
+    health.className = `link-health-indicator status-${link.healthStatus}`;
+    const labels = { ok: "正常", broken: "失效", timeout: "超时", blocked: "受限" };
+    health.title = `${labels[link.healthStatus] || "未知"}${link.healthCode ? ` · HTTP ${link.healthCode}` : ""}`;
+    health.setAttribute("aria-label", health.title);
+    titleRow.appendChild(health);
+  }
+  content.append(titleRow);
   content.append(createTextElement("div", "link-url", extractDomain(link.url)));
+  if (link.note) {
+    content.append(createTextElement("div", "link-note", link.note));
+  }
 
   /** 链接主内容按钮。 */
   const contentButton = document.createElement("button");
@@ -963,6 +1039,17 @@ function createLinkActionMenuElement(groupId, link) {
     root.MyTabDeskActions.refreshLinkIcon(groupId, link.id);
   });
 
+  const checkHealthButton = document.createElement("button");
+  checkHealthButton.type = "button";
+  checkHealthButton.className = "link-menu-action";
+  checkHealthButton.textContent = "检查链接";
+  checkHealthButton.setAttribute("role", "menuitem");
+  checkHealthButton.addEventListener("click", (event) => {
+    event.stopPropagation();
+    const activeSpace = root.MyTabDeskUtils.getActiveSpace();
+    root.MyTabDeskHealth.checkSingleLink(activeSpace.id, groupId, link.id);
+  });
+
   /** 删除链接按钮。 */
   const deleteButton = document.createElement("button");
   deleteButton.type = "button";
@@ -979,7 +1066,7 @@ function createLinkActionMenuElement(groupId, link) {
     }
   });
 
-  menu.append(editButton, refreshIconButton, deleteButton);
+  menu.append(editButton, refreshIconButton, checkHealthButton, deleteButton);
   return menu;
 }
 
@@ -994,6 +1081,8 @@ function renderCurrentTabs() {
   const hasCurrentTabs = state.currentTabs.length > 0;
   elements.tabSearchInput.disabled = !hasCurrentTabs;
   elements.saveCurrentTabsBtn.disabled = !hasCurrentTabs;
+  elements.saveAndCloseTabsBtn.disabled = !hasCurrentTabs;
+  elements.saveAndDiscardTabsBtn.disabled = !hasCurrentTabs;
 
   if (!hasChromeTabs()) {
     elements.currentTabsList.appendChild(createTextElement("div", "panel-message", "当前页面未运行在浏览器扩展环境中，无法读取窗口标签页。"));
@@ -1037,6 +1126,14 @@ function renderCurrentTabs() {
     content.className = "tab-content";
     content.append(createTextElement("div", "tab-title", tab.title));
     content.append(createTextElement("div", "tab-url", tab.url));
+    const lifecycle = state.tabLifecycleById && state.tabLifecycleById.get(tab.tabId);
+    if (lifecycle) {
+      const badge = createTextElement("span", `tab-lifecycle-badge status-${lifecycle.status}`, root.MyTabDeskLifecycle.formatElapsed(lifecycle.openMs));
+      if (lifecycle.protectedReason) badge.classList.add("protected");
+      const reasonLabels = { active: "当前活动", pinned: "固定标签", audible: "正在播放音频", whitelist: "白名单", internal: "内部页面" };
+      badge.title = lifecycle.protectedReason ? `已保护：${reasonLabels[lifecycle.protectedReason] || lifecycle.protectedReason}` : `闲置 ${root.MyTabDeskLifecycle.formatElapsed(lifecycle.idleMs)}`;
+      content.appendChild(badge);
+    }
 
     /** 单个当前标签保存按钮。 */
     const saveButton = document.createElement("button");
@@ -1059,6 +1156,7 @@ function renderCurrentTabs() {
       event.stopPropagation();
       state.draggedTab = tab;
       event.dataTransfer.setData("text/plain", tab.url);
+      event.dataTransfer.setData("application/x-mytabdesk-tab", JSON.stringify(tab));
     });
     elements.currentTabsList.appendChild(item);
   }
@@ -1072,8 +1170,18 @@ function renderCurrentTabs() {
 function toggleCreateSpaceMenu() {
   state.createSpaceMenuOpen = !state.createSpaceMenuOpen;
   state.openSpaceMenuId = "";
+  positionCreateSpaceMenu();
   elements.createSpaceMenu.hidden = !state.createSpaceMenuOpen;
   elements.createSpaceBtn.setAttribute("aria-expanded", state.createSpaceMenuOpen ? "true" : "false");
+}
+
+function positionCreateSpaceMenu() {
+  const menu = elements.createSpaceMenu;
+  const anchor = elements.createSpaceBtn;
+  if (!menu || !anchor) return;
+  const rect = anchor.getBoundingClientRect();
+  menu.style.top = `${rect.bottom + 8}px`;
+  menu.style.right = `${window.innerWidth - rect.right}px`;
 }
 
 /**

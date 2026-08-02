@@ -12,6 +12,7 @@
  * @property {string} title - 链接显示标题
  * @property {string} url - 链接 URL 地址
  * @property {string} favIconUrl - 网站图标 URL
+ * @property {string} [note] - 用户备注，用于记录链接的上下文说明
  * @property {number} createdAt - 创建时间戳（毫秒）
  * @property {number} [updatedAt] - 更新时间戳（毫秒）
  * @property {number} [order] - 分组内排序值，缺失时按 createdAt 回落，用于保留拖拽顺序

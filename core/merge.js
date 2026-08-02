@@ -24,7 +24,7 @@ function getEffectiveUpdatedAt(item) {
     return 0;
   }
   // createdAt 可能由旧数据迁移时补齐，不能参与跨设备版本竞争。
-  return Math.max(item.updatedAt || 0, item.deletedAt || 0);
+  return Math.max(item.updatedAt || 0, item.deletedAt || 0, item.purgedAt || 0);
 }
 
 /**
@@ -355,6 +355,31 @@ function mergeWorkspaceData(localData, remoteData, deviceId) {
   return mergedData;
 }
 
+/**
+ * 合并本地和远程会话快照，取并集后按 createdAt 降序排列，再裁剪到上限和保留期。
+ *
+ * @param {Array<object>} localSnapshots 本地快照列表。
+ * @param {Array<object>} remoteSnapshots 远程快照列表。
+ * @param {{limit:number,retentionMs:number}} options 合并选项。
+ * @returns {Array<object>} 合并后的快照列表。
+ */
+function mergeSessionSnapshots(localSnapshots, remoteSnapshots, options) {
+  const limit = options && Number.isInteger(options.limit) ? options.limit : 50;
+  const retentionMs = options && Number.isInteger(options.retentionMs) ? options.retentionMs : 30 * 24 * 60 * 60 * 1000;
+  const cutoff = Date.now() - retentionMs;
+  const seen = new Map();
+
+  for (const snapshot of [...(localSnapshots || []), ...(remoteSnapshots || [])]) {
+    if (!snapshot || !snapshot.id || !Number.isFinite(snapshot.createdAt)) continue;
+    if (!seen.has(snapshot.id)) seen.set(snapshot.id, snapshot);
+  }
+
+  return Array.from(seen.values())
+    .filter((s) => s.createdAt >= cutoff)
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, limit);
+}
+
   return {
     getEffectiveUpdatedAt,
 
@@ -364,6 +389,7 @@ function mergeWorkspaceData(localData, remoteData, deviceId) {
   mergeGroups,
   mergeSpace,
   mergeSpaces,
-  mergeWorkspaceData
+  mergeWorkspaceData,
+  mergeSessionSnapshots
   };
 });

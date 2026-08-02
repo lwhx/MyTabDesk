@@ -106,18 +106,24 @@ function filterGroups(groups, keyword) {
     return groups;
   }
 
+  const colorMatch = q.match(/^color:(red|orange|yellow|green|blue|purple|grey|none)$/);
+  const requestedColor = colorMatch ? (colorMatch[1] === "none" ? "" : colorMatch[1]) : null;
+
   return groups
     .map((group) => {
-      /** 分组名称是否命中关键词。 */
-      const groupMatched = group.name.toLowerCase().includes(q);
+      const groupMatched = requestedColor !== null
+        ? (group.color || "") === requestedColor
+        : group.name.toLowerCase().includes(q);
 
       if (groupMatched) {
         return group;
       }
 
-      /** 当前分组内命中关键词的链接。 */
       const matchedLinks = group.links.filter((link) => {
-        return link.title.toLowerCase().includes(q) || link.url.toLowerCase().includes(q);
+        if (requestedColor !== null) return (link.color || "") === requestedColor;
+        return link.title.toLowerCase().includes(q)
+          || link.url.toLowerCase().includes(q)
+          || String(link.note || "").toLowerCase().includes(q);
       });
 
       if (matchedLinks.length === 0) {

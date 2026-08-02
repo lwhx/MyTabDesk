@@ -26,6 +26,7 @@
             <button id="createBlankSpaceBtn" class="create-space-action" type="button"><span aria-hidden="true">+</span>创建空间</button>
             <button id="importSpaceBtn" class="create-space-action" type="button"><span aria-hidden="true">⇪</span>导入空间</button>
             <button id="importBookmarksBtn" class="create-space-action" type="button"><span aria-hidden="true">☆</span>从浏览器书签导入</button>
+            <button id="createFromTemplateBtn" class="create-space-action" type="button" hidden><span aria-hidden="true">▦</span>从模板创建</button>
           </div>
         </div>
       </header>
@@ -39,6 +40,9 @@
       </section>
 
       <footer class="sidebar-footer">
+        <button id="sessionsBtn" class="sidebar-footer-button" type="button"><span aria-hidden="true">◷</span>会话恢复</button>
+        <button id="statsBtn" class="sidebar-footer-button" type="button"><span aria-hidden="true">▥</span>使用统计</button>
+        <button id="trashBtn" class="sidebar-footer-button" type="button"><span aria-hidden="true">♲</span>回收站</button>
         <button id="settingsBtn" class="sidebar-footer-button" type="button">设置</button>
       </footer>
     </aside>
@@ -62,6 +66,12 @@
             <div class="workspace-more-panel" role="menu">
               <button id="toggleThemeBtn" class="workspace-menu-action" type="button" role="menuitem">深色模式</button>
               <button id="toggleTabsPanelBtn" class="workspace-menu-action" type="button" role="menuitem">收起右栏</button>
+              <button id="deduplicateLinksBtn" class="workspace-menu-action" type="button" role="menuitem">扫描重复链接</button>
+              <button id="checkLinksHealthBtn" class="workspace-menu-action" type="button" role="menuitem">检查链接健康状态</button>
+              <button id="exportSpaceAsHtmlBtn" class="workspace-menu-action" type="button" role="menuitem">导出为 HTML</button>
+              <button id="saveCurrentSpaceTemplateBtn" class="workspace-menu-action" type="button" role="menuitem">保存为模板</button>
+              <button id="aiGroupLinksBtn" class="workspace-menu-action" type="button" role="menuitem">AI 分组建议</button>
+              <button id="cacheFaviconsBtn" class="workspace-menu-action" type="button" role="menuitem">缓存当前空间图标</button>
               <button id="batchDeleteBtn" class="workspace-menu-action danger" type="button" role="menuitem">批量删除</button>
             </div>
           </details>
@@ -83,6 +93,111 @@
         <h2>还没有保存任何链接</h2>
         <p>你可以从右侧当前窗口标签页栏保存当前窗口的网页。</p>
       </div>
+
+      <section id="sessionView" class="session-view" hidden>
+        <header class="session-page-header">
+          <div>
+            <h1>会话恢复</h1>
+            <p>自动保护浏览器窗口、标签顺序和原生标签组，随时回到之前的工作现场。</p>
+          </div>
+          <button id="captureSessionBtn" class="primary-button" type="button">立即保存恢复点</button>
+        </header>
+
+        <section class="session-health-bar" aria-label="自动保护状态">
+          <span class="session-health-state"><i aria-hidden="true"></i><strong>自动保护运行中</strong></span>
+          <span>每 15 分钟</span>
+          <span>最近保存 <strong id="sessionLatestValue">暂无</strong></span>
+          <span><strong id="sessionCountValue">0</strong> / <input id="sessionLimitInput" type="number" min="10" max="500" value="50" class="session-limit-input" aria-label="最大保留条数" /> 条</span>
+          <span>最长保留 30 天</span>
+        </section>
+        <p class="session-privacy-note">恢复点仅保存在本机，不参与工作台的 Gist/WebDAV 同步，也不会进入备份文件。可在下方单独配置 WebDAV 跨设备同步。</p>
+
+        <article class="session-sync-card">
+          <header class="session-sync-header">
+            <div>
+              <div class="session-sync-title">会话恢复 WebDAV 同步</div>
+              <p class="settings-row-desc">使用独立的 WebDAV 地址同步会话快照，配置与工作台数据互不影响。</p>
+            </div>
+            <label class="settings-switch" for="sessionWebdavSyncSwitch" aria-label="启用会话恢复自动同步">
+              <input id="sessionWebdavSyncSwitch" type="checkbox" />
+              <span></span>
+            </label>
+          </header>
+          <div class="settings-row">
+            <label class="settings-label" for="sessionWebdavUrlInput">WebDAV URL</label>
+            <input id="sessionWebdavUrlInput" class="settings-input" type="url" placeholder="https://example.com/remote.php/dav/files/user/session-sync.json" autocomplete="off" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="sessionWebdavUsernameInput">用户名</label>
+            <input id="sessionWebdavUsernameInput" class="settings-input" type="text" placeholder="用户名" autocomplete="username" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="sessionWebdavPasswordInput">密码</label>
+            <input id="sessionWebdavPasswordInput" class="settings-input" type="password" placeholder="应用密码或访问密码" autocomplete="current-password" />
+          </div>
+          <div class="settings-row">
+            <label class="settings-label" for="sessionWebdavFilenameInput">同步文件名</label>
+            <input id="sessionWebdavFilenameInput" class="settings-input" type="text" placeholder="MyTabDesk-session.json" autocomplete="off" />
+            <p class="settings-row-desc">留空时默认使用 MyTabDesk-session.json。仅当 URL 为目录地址时生效。</p>
+          </div>
+          <div class="settings-row settings-row-stackable">
+            <span class="settings-label">同步方式</span>
+            <div class="settings-actions settings-actions-inline">
+              <button id="sessionUploadBtn" class="secondary-button" type="button">上传到 WebDAV</button>
+              <button id="sessionDownloadBtn" class="secondary-button" type="button">从 WebDAV 合并</button>
+            </div>
+          </div>
+        </article>
+
+        <div class="session-tools">
+          <div id="sessionFilterTabs" class="session-filter-tabs" role="tablist" aria-label="恢复点类型">
+            <button class="session-filter active" type="button" data-filter="all" role="tab" aria-selected="true">全部</button>
+            <button class="session-filter" type="button" data-filter="auto" role="tab" aria-selected="false">自动保存</button>
+            <button class="session-filter" type="button" data-filter="manual" role="tab" aria-selected="false">手动保存</button>
+          </div>
+          <label class="session-skip-open-option" for="sessionSkipOpenUrlsInput">
+            <input id="sessionSkipOpenUrlsInput" type="checkbox" checked />
+            <span>跳过已打开页面</span>
+          </label>
+          <label class="session-search" for="sessionSearchInput">
+            <span aria-hidden="true">⌕</span>
+            <input id="sessionSearchInput" type="search" placeholder="搜索页面、域名或标签组..." autocomplete="off" />
+          </label>
+        </div>
+
+        <div id="sessionHistoryList" class="session-history-list" aria-live="polite">
+          <p class="settings-row-desc">正在读取会话历史...</p>
+        </div>
+      </section>
+
+      <section id="trashView" class="trash-view" hidden>
+        <header class="trash-page-header">
+          <div>
+            <h1>回收站</h1>
+            <p>删除的空间、分组和链接会保留 30 天，可在此恢复或永久删除。</p>
+          </div>
+          <button id="emptyTrashBtn" class="secondary-button danger-text-button" type="button">清空回收站</button>
+        </header>
+        <div id="trashList" class="trash-list" aria-live="polite"></div>
+      </section>
+
+      <section id="statsView" class="stats-view" hidden>
+        <header class="stats-page-header">
+          <div><h1>使用统计</h1><p>数据仅保存在当前设备，不参与同步或备份。</p></div>
+          <button id="refreshStatsBtn" class="secondary-button" type="button">刷新</button>
+        </header>
+        <div class="stats-summary-grid">
+          <article><span>今日保存</span><strong id="statsSavedToday">0</strong></article>
+          <article><span>今日恢复</span><strong id="statsRestoredToday">0</strong></article>
+          <article><span>活跃域名</span><strong id="statsDomainsToday">0</strong></article>
+          <article><span>追踪标签</span><strong id="statsTrackedTabs">0</strong></article>
+        </div>
+        <section class="stats-section"><div class="stats-section-title"><h2>保存与恢复趋势</h2><select id="statsTrendRangeSelect" class="settings-input"><option value="7">近 7 天</option><option value="14">近 14 天</option><option value="30" selected>近 30 天</option><option value="90">近 90 天</option></select></div><svg id="statsTrendChart" class="stats-trend-chart" viewBox="0 0 840 220" role="img" aria-label="保存与恢复趋势图"></svg></section>
+        <div class="stats-two-column">
+          <section class="stats-section"><h2>今日网站停留时间</h2><div id="statsDomainList" class="stats-ranking-list"></div></section>
+          <section class="stats-section"><h2>空间健康度</h2><div id="statsSpaceList" class="stats-ranking-list"></div></section>
+        </div>
+      </section>
 
       <section id="settingsView" class="settings-view" hidden>
         <header class="settings-header">
@@ -150,6 +265,7 @@
               <p class="settings-hint">加密备份使用 AES-GCM 保护数据，导入时需要输入相同密码。请妥善保管密码，忘记密码将无法恢复数据。</p>
             </div>
           </section>
+
 
           <section class="settings-section">
             <div class="settings-section-head">
@@ -253,6 +369,40 @@
               <p class="settings-row-desc">设置密码后，上传到 WebDAV/Gist 的同步数据将被加密。留空则使用明文同步。所有设备需使用相同密码。</p>
             </div>
           </section>
+          <section class="settings-card settings-card-wide lifecycle-settings-card">
+            <div class="settings-section-head"><div><h2>标签页生命周期</h2><p>识别长期闲置标签，并保护固定、播放音频和白名单网站。</p></div></div>
+            <div class="lifecycle-settings-grid">
+              <label class="settings-switch-row"><span>启用追踪</span><input id="lifecycleEnabledInput" type="checkbox" checked /></label>
+              <label><span>闲置警告（分钟）</span><input id="lifecycleIdleMinutesInput" class="settings-input" type="number" min="1" max="1440" value="60" /></label>
+              <label><span>建议整理（小时）</span><input id="lifecycleAutoSaveHoursInput" class="settings-input" type="number" min="1" max="720" value="24" /></label>
+              <label><span>最大标签数提醒</span><input id="lifecycleMaxTabsInput" class="settings-input" type="number" min="5" max="500" value="50" /></label>
+              <label class="lifecycle-whitelist-field"><span>白名单域名（每行一个）</span><textarea id="lifecycleWhitelistInput" class="settings-input" rows="4" placeholder="github.com&#10;mail.google.com"></textarea></label>
+            </div>
+            <div class="settings-actions"><button id="saveLifecycleConfigBtn" class="primary-button" type="button">保存生命周期设置</button></div>
+          </section>
+          <section class="settings-card settings-card-wide scheduled-save-card">
+            <div class="settings-section-head"><div><h2>定时保存</h2><p>按设定时间自动将当前窗口标签页保存到指定空间和分组，不会关闭原标签。</p></div></div>
+            <div class="scheduled-save-grid">
+              <label class="settings-switch-row"><span>启用定时保存</span><input id="scheduledSaveEnabledInput" type="checkbox" /></label>
+              <label><span>触发时间</span><input id="scheduledSaveTimeInput" class="settings-input" type="time" value="09:00" /></label>
+              <label><span>保存到空间</span><select id="scheduledSaveSpaceSelect" class="settings-input"></select></label>
+              <label><span>保存到分组</span><select id="scheduledSaveGroupSelect" class="settings-input"></select></label>
+            </div>
+            <div class="settings-actions"><button id="saveScheduledSaveConfigBtn" class="primary-button" type="button">保存定时保存设置</button></div>
+          </section>
+          <section class="settings-card settings-card-wide ai-grouping-settings-card">
+            <div class="settings-section-head"><div><h2>AI 分组</h2><p>配置 OpenAI-compatible 接口。API Key 仅保存在当前浏览器，不参与同步或备份。</p></div></div>
+            <div class="lifecycle-settings-grid">
+              <label><span>接口地址</span><input id="aiGroupingBaseUrlInput" class="settings-input" type="url" placeholder="https://api.example.com/v1" /></label>
+              <label><span>模型</span><input id="aiGroupingModelInput" class="settings-input" type="text" placeholder="gpt-4o-mini" /></label>
+              <label><span>API Key</span><input id="aiGroupingApiKeyInput" class="settings-input" type="password" autocomplete="off" placeholder="不会进入备份" /></label>
+            </div>
+            <div class="settings-actions"><button id="saveAiGroupingConfigBtn" class="primary-button" type="button">保存 AI 配置</button></div>
+          </section>
+          <section class="settings-card settings-card-wide favicon-cache-settings-card">
+            <div class="settings-section-head"><div><h2>网站图标离线缓存</h2><p>最多缓存 500 个 favicon，仅保存在当前设备。</p></div></div>
+            <div class="settings-actions"><button id="clearFaviconCacheBtn" class="secondary-button" type="button">清空图标缓存</button></div>
+          </section>
         </div>
       </section>
     </main>
@@ -272,6 +422,9 @@
         <div class="tabs-actions">
           <button id="refreshTabsBtn" class="icon-button text-icon-button" type="button" aria-label="刷新当前窗口标签页">刷新</button>
           <button id="saveCurrentTabsBtn" class="primary-button" type="button">保存</button>
+          <button id="saveAndCloseTabsBtn" class="secondary-button" type="button">保存并关闭</button>
+          <button id="saveAndDiscardTabsBtn" class="secondary-button" type="button">保存并休眠</button>
+          <button id="organizeIdleTabsBtn" class="secondary-button" type="button">整理闲置标签</button>
         </div>
       </header>
 
@@ -318,6 +471,18 @@
           <span>图标</span>
           <input id="editLinkIconInput" class="create-dialog-input" type="url" autocomplete="off" placeholder="可留空，或填写图标地址" />
         </label>
+        <label class="edit-link-field" for="editLinkNoteInput">
+          <span>备注</span>
+          <textarea id="editLinkNoteInput" class="create-dialog-input edit-link-note" rows="2" autocomplete="off" placeholder="可留空，或填写备注说明"></textarea>
+        </label>
+        <label class="edit-link-field" for="editLinkColorInput">
+          <span>颜色标记</span>
+          <select id="editLinkColorInput" class="create-dialog-input">
+            <option value="">无</option><option value="red">红色</option><option value="orange">橙色</option>
+            <option value="yellow">黄色</option><option value="green">绿色</option><option value="blue">蓝色</option>
+            <option value="purple">紫色</option><option value="grey">灰色</option>
+          </select>
+        </label>
         <div id="editLinkError" class="create-dialog-error" aria-live="polite"></div>
       </div>
       <footer class="create-dialog-footer">
@@ -358,6 +523,26 @@
     </section>
   </div>
 
+  <div id="aiGroupingPreviewDialog" class="modal-backdrop" hidden>
+    <section class="app-dialog ai-grouping-preview-dialog" role="dialog" aria-modal="true" aria-labelledby="aiGroupingPreviewTitle">
+      <header class="app-dialog-header"><div class="app-dialog-mark" aria-hidden="true">AI</div><div><h2 id="aiGroupingPreviewTitle">AI 分组建议</h2><p>仅在确认后才会调整当前空间。</p></div></header>
+      <div id="aiGroupingPreviewList" class="ai-grouping-preview-list"></div>
+      <footer class="app-dialog-footer"><button id="cancelAiGroupingBtn" class="secondary-button" type="button">取消</button><button id="confirmAiGroupingBtn" class="primary-button" type="button">确认应用</button></footer>
+    </section>
+  </div>
+
+  <div id="commandPalette" class="command-palette-backdrop" hidden>
+    <section class="command-palette" role="dialog" aria-modal="true" aria-labelledby="commandPaletteTitle">
+      <header class="command-palette-header">
+        <span aria-hidden="true">⌕</span>
+        <input id="commandPaletteInput" type="search" role="combobox" aria-controls="commandPaletteResults" aria-expanded="true" placeholder="搜索所有空间、分组、链接和当前标签..." autocomplete="off" />
+        <kbd>Esc</kbd>
+      </header>
+      <h2 id="commandPaletteTitle" class="sr-only">全局搜索</h2>
+      <div id="commandPaletteResults" class="command-palette-results" role="listbox"></div>
+    </section>
+  </div>
+
   <script src="core/constants.js?v=20260614-core-split"></script>
   <script src="core/ids.js?v=20260614-core-split"></script>
   <script src="core/normalize.js?v=20260614-core-split"></script>
@@ -366,6 +551,9 @@
   <script src="core/tabtab.js?v=20260614-core-split"></script>
   <script src="core/io.js?v=20260614-core-split"></script>
   <script src="core/reorder.js?v=20260614-core-split"></script>
+  <script src="core/trash.js?v=20260802-trash"></script>
+  <script src="core/health.js?v=20260802-health"></script>
+  <script src="core/ai-grouping.js?v=20260803-ai-grouping"></script>
   <script src="core/merge.js?v=20260614-core-split"></script>
   <script src="core/crypto.js?v=20260614-core-split"></script>
   <script src="tabdesk-core.js?v=20260614-core-split"></script>
@@ -378,6 +566,14 @@
   <script src="newtab-actions.js?v=20260430-modular"></script>
   <script src="newtab-render.js?v=20260430-modular"></script>
   <script src="newtab-notifications.js?v=20260506-context-menu"></script>
+  <script src="newtab-sessions.js?v=20260730-session-safety"></script>
+  <script src="newtab-trash.js?v=20260802-trash"></script>
+  <script src="newtab-health.js?v=20260802-health"></script>
+  <script src="newtab-stats.js?v=20260802-stats"></script>
+  <script src="newtab-lifecycle.js?v=20260802-lifecycle"></script>
+  <script src="newtab-ai-grouping.js?v=20260803-ai-grouping"></script>
+  <script src="newtab-favicon-cache.js?v=20260803-favicon-cache"></script>
+  <script src="newtab-command-palette.js?v=20260730-global-search"></script>
   <script src="newtab-main.js?v=20260506-context-menu"></script>
 </body>
 </html>

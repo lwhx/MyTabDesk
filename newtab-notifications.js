@@ -50,8 +50,9 @@ async function showSystemNotification(title, message, type = NotificationType.IN
  * @param {string} message - 提示文本
  * @param {string} type - 提示类型：success | error | warning | info
  * @param {number} duration - 显示时长（毫秒）
+ * @param {{actionText?:string,onAction?:Function}} [action] 可选操作按钮。
  */
-function showInAppToast(message, type = "info", duration = 3000) {
+function showInAppToast(message, type = "info", duration = 3000, action = null) {
   // 创建通知容器
   let container = document.getElementById("toast-container");
 
@@ -94,6 +95,18 @@ function showInAppToast(message, type = "info", duration = 3000) {
   const toastMessage = document.createElement("span");
   toastMessage.textContent = message;
   toastContent.append(toastIcon, toastMessage);
+  if (action && action.actionText && typeof action.onAction === "function") {
+    const actionButton = document.createElement("button");
+    actionButton.type = "button";
+    actionButton.textContent = action.actionText;
+    actionButton.style.cssText = "border:0;border-radius:6px;padding:4px 8px;background:rgba(255,255,255,.2);color:#fff;font-weight:600;cursor:pointer;";
+    actionButton.addEventListener("click", async () => {
+      actionButton.disabled = true;
+      await action.onAction();
+      toast.remove();
+    }, { once: true });
+    toastContent.appendChild(actionButton);
+  }
   toast.appendChild(toastContent);
 
   container.appendChild(toast);
@@ -381,6 +394,7 @@ root.MyTabDeskNotifications = {
   NotificationConfig,
   showSystemNotification,
   showInAppToast,
+  showToast: showInAppToast,
   notify,
   notifySuccess,
   notifyError,

@@ -639,8 +639,12 @@ function createFavicon(src, title, pageUrl = "", refreshToken = 0) {
   /** 优先用于兜底图标显示与配色的文本，优先用域名（更稳定可区分）。 */
   const label = extractDomain(pageUrl) || (title ? title.trim() : "") || "";
 
-  /** 候选图标地址，按优先级排列：Chrome 原生 → 原始 src → Cravatar（国内）→ Google（海外）。 */
+  /** 候选图标地址，按优先级排列：离线缓存 → Chrome 原生 → 原始 src → Cravatar → Google。 */
+  const cachedSource = globalThis.MyTabDeskFaviconCache
+    ? globalThis.MyTabDeskFaviconCache.resolveFaviconSource(src)
+    : src;
   let candidates = [
+    cachedSource !== src ? cachedSource : "",
     getChromeFaviconUrl(pageUrl),
     src,
     getCravatarFaviconUrl(pageUrl),

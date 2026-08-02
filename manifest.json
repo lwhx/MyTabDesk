@@ -2,9 +2,11 @@
   "manifest_version": 3,
   "name": "MyTabDesk",
   "version": "2.1.0",
-  "description": "A local-first new tab workspace for saving and restoring browser tabs.",
+  "description": "A local-first tab workspace for saving, organizing, and restoring browser tabs.",
   "permissions": [
     "tabs",
+    "tabGroups",
+    "bookmarks",
     "storage",
     "contextMenus",
     "notifications",
@@ -13,6 +15,7 @@
     "alarms"
   ],
   "host_permissions": [
+    "http://*/*",
     "https://*/*"
   ],
   "content_security_policy": {
@@ -24,6 +27,16 @@
       "16": "assets/icon16.png",
       "48": "assets/icon48.png",
       "128": "assets/icon128.png"
+    }
+  },
+  "commands": {
+    "open-mytabdesk": {
+      "suggested_key": { "default": "Alt+Shift+D", "mac": "Alt+Shift+D" },
+      "description": "打开 MyTabDesk"
+    },
+    "save-current-tab": {
+      "suggested_key": { "default": "Alt+Shift+S", "mac": "Alt+Shift+S" },
+      "description": "保存当前标签到 MyTabDesk"
     }
   },
   "background": {

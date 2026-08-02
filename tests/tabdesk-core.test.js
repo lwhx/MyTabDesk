@@ -52,7 +52,9 @@ const {
   moveLinkBetweenGroups,
   updateLink,
   addLinksToGroup,
-  clearAllData
+  clearAllData,
+  normalizeSpaceTemplate,
+  createSpaceFromTemplate
 } = tabdeskCore;
 
 /**
@@ -182,7 +184,9 @@ function testFilterGroups() {
       links: [
         {
           title: "OpenAI",
-          url: "https://openai.com"
+          url: "https://openai.com",
+          note: "模型接口",
+          color: "red"
         },
         {
           title: "Chrome Docs",
@@ -212,6 +216,14 @@ function testFilterGroups() {
   assert.equal(linkMatched.length, 1);
   assert.equal(linkMatched[0].links.length, 1);
   assert.equal(linkMatched[0].links[0].title, "Chrome Docs");
+
+  const noteMatched = filterGroups(groups, "模型接口");
+  assert.equal(noteMatched[0].links[0].title, "OpenAI");
+
+  const colorMatched = filterGroups(groups, "color:red");
+  assert.equal(colorMatched.length, 1);
+  assert.equal(colorMatched[0].links.length, 1);
+  assert.equal(colorMatched[0].links[0].title, "OpenAI");
 
   /** 无匹配项时的搜索结果。 */
   const emptyMatched = filterGroups(groups, "not-found");
@@ -1755,7 +1767,8 @@ function testUpdateLinkChangesTitleUrlAndIcon() {
   const nextData = updateLink(data, "space-a", "group-a", "link-a", {
     title: "新标题",
     url: "https://new.example.com",
-    favIconUrl: "https://new.example.com/icon.png"
+    favIconUrl: "https://new.example.com/icon.png",
+    note: "仅用于回归测试的备注"
   });
   /** 编辑后的链接数据。 */
   const link = nextData.spaces[0].groups[0].links[0];
@@ -1764,6 +1777,7 @@ function testUpdateLinkChangesTitleUrlAndIcon() {
   assert.equal(link.title, "新标题");
   assert.equal(link.url, "https://new.example.com");
   assert.equal(link.favIconUrl, "https://new.example.com/icon.png");
+  assert.equal(link.note, "仅用于回归测试的备注");
   assert.equal(link.createdAt, 80);
   assert.equal(link.updatedAt >= 100, true);
   assert.equal(nextData.spaces[0].groups[0].updatedAt >= 100, true);
@@ -2624,6 +2638,400 @@ function testMergeRespectsSpaceTombstone() {
   assert.equal(mergedWithThirdDevice.spaces.find((s) => s.id === "s2").deletedAt, 200);
 }
 
+function testMergeSessionSnapshotsUnionsById() {
+  const now = Date.now();
+  const local = [
+    { id: "a", createdAt: now, reason: "manual", windows: [] },
+    { id: "b", createdAt: now - 1000, reason: "interval", windows: [] }
+  ];
+  const remote = [
+    { id: "b", createdAt: now - 1000, reason: "interval", windows: [] },
+    { id: "c", createdAt: now - 2000, reason: "startup", windows: [] }
+  ];
+  const merged = tabdeskCore.mergeSessionSnapshots(local, remote, { limit: 50, retentionMs: 30 * 24 * 60 * 60 * 1000 });
+  assert.equal(merged.length, 3);
+  assert.equal(merged[0].id, "a");
+  assert.equal(merged[1].id, "b");
+  assert.equal(merged[2].id, "c");
+}
+
+function testMergeSessionSnapshotsAppliesLimitAndRetention() {
+  const now = Date.now();
+  const old = now - (31 * 24 * 60 * 60 * 1000);
+  const localSnapshots = Array.from({ length: 5 }, (_, i) => ({
+    id: `local-${i}`, createdAt: now - i * 1000, reason: "interval", windows: []
+  }));
+  const remote = [
+    { id: "expired", createdAt: old, reason: "manual", windows: [] },
+    { id: "remote-0", createdAt: now - 200, reason: "manual", windows: [] }
+  ];
+  const merged = tabdeskCore.mergeSessionSnapshots(localSnapshots, remote, { limit: 3, retentionMs: 30 * 24 * 60 * 60 * 1000 });
+  assert.equal(merged.length, 3);
+  assert.equal(merged.some((s) => s.id === "expired"), false);
+  assert.equal(merged[0].id, "local-0");
+  assert.equal(merged[1].id, "remote-0");
+}
+
+function testFindDuplicateLinksAcrossGroups() {
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "s1",
+    spaces: [{
+      id: "s1",
+      name: "S1",
+      groups: [
+        { id: "g1", name: "G1", links: [{ id: "a", title: "A", url: "https://example.com/page#one", createdAt: 10, updatedAt: 10 }] },
+        { id: "g2", name: "G2", links: [{ id: "b", title: "B", url: "https://EXAMPLE.com/page", createdAt: 20, updatedAt: 20 }] }
+      ]
+    }],
+    settings: {}
+  });
+
+  const duplicates = tabdeskCore.findDuplicateLinks(data, { spaceId: "s1" });
+  assert.equal(duplicates.length, 1);
+  assert.equal(duplicates[0].keep.linkId, "b");
+  assert.deepEqual(duplicates[0].duplicates.map((item) => item.linkId), ["a"]);
+}
+
+function testDeduplicateLinksCreatesTombstones() {
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "s1",
+    spaces: [{
+      id: "s1",
+      name: "S1",
+      groups: [
+        { id: "g1", name: "G1", links: [{ id: "a", title: "A", url: "https://example.com/page/", createdAt: 10, updatedAt: 10 }] },
+        { id: "g2", name: "G2", links: [{ id: "b", title: "B", url: "https://example.com/page", createdAt: 20, updatedAt: 20 }] }
+      ]
+    }],
+    settings: {}
+  });
+
+  const result = tabdeskCore.deduplicateLinks(data, { spaceId: "s1" });
+  assert.equal(result.removedCount, 1);
+  assert.equal(result.data.spaces[0].groups[0].links[0].deletedAt > 0, true);
+  assert.equal(result.data.spaces[0].groups[1].links[0].deletedAt, undefined);
+}
+
+function testTrashListsOnlyTopLevelRecoverableTombstones() {
+  const now = Date.now();
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "live-space",
+    spaces: [
+      {
+        id: "deleted-space",
+        name: "已删空间",
+        deletedAt: now - 100,
+        groups: [{ id: "nested-group", name: "内部组", deletedAt: now - 90, links: [] }]
+      },
+      {
+        id: "live-space",
+        name: "正常空间",
+        groups: [
+          { id: "deleted-group", name: "已删分组", deletedAt: now - 80, links: [] },
+          {
+            id: "live-group",
+            name: "正常分组",
+            links: [{ id: "deleted-link", title: "已删链接", url: "https://trash.example", deletedAt: now - 70 }]
+          }
+        ]
+      }
+    ],
+    settings: {}
+  });
+
+  const items = tabdeskCore.getTrashItems(data);
+  assert.deepEqual(items.map((item) => item.type), ["link", "group", "space"]);
+  assert.equal(items.some((item) => item.groupId === "nested-group"), false);
+}
+
+function testRestoreTrashLinkClearsTombstoneAndWinsVersionConflict() {
+  const deletedAt = Date.now() - 1000;
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "s1",
+    spaces: [{
+      id: "s1",
+      name: "S1",
+      groups: [{
+        id: "g1",
+        name: "G1",
+        links: [{ id: "l1", title: "L1", url: "https://restore.example", updatedAt: deletedAt, deletedAt }]
+      }]
+    }],
+    settings: {}
+  });
+
+  const restored = tabdeskCore.restoreTrashItem(data, { type: "link", spaceId: "s1", groupId: "g1", linkId: "l1" });
+  const link = restored.spaces[0].groups[0].links[0];
+  assert.equal(link.deletedAt, undefined);
+  assert.equal(link.updatedAt > deletedAt, true);
+}
+
+function testPurgeTrashLinkKeepsMinimalSyncTombstone() {
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "s1",
+    spaces: [{
+      id: "s1",
+      name: "S1",
+      groups: [{
+        id: "g1",
+        name: "G1",
+        links: [{ id: "l1", title: "敏感标题", note: "敏感备注", url: "https://purge.example", deletedAt: Date.now() - 1000 }]
+      }]
+    }],
+    settings: {}
+  });
+
+  const purged = tabdeskCore.purgeTrashItem(data, { type: "link", spaceId: "s1", groupId: "g1", linkId: "l1" });
+  const link = purged.spaces[0].groups[0].links[0];
+  assert.equal(link.purgedAt > 0, true);
+  assert.equal(link.deletedAt, link.purgedAt);
+  assert.equal(link.title, "已永久删除");
+  assert.equal(link.url, "mytabdesk-purged://l1");
+  assert.equal(link.note, "");
+  assert.equal(tabdeskCore.getTrashItems(purged).length, 0);
+}
+
+function testPurgeExpiredTrashPurgesOnlyExpiredItems() {
+  const now = Date.now();
+  const retentionMs = 30 * 24 * 60 * 60 * 1000;
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "s1",
+    spaces: [{
+      id: "s1",
+      name: "S1",
+      groups: [{
+        id: "g1",
+        name: "G1",
+        links: [
+          { id: "old", title: "Old", url: "https://old.example", deletedAt: now - retentionMs - 1 },
+          { id: "recent", title: "Recent", url: "https://recent.example", deletedAt: now - 1000 }
+        ]
+      }]
+    }],
+    settings: {}
+  });
+
+  const result = tabdeskCore.purgeExpiredTrash(data, retentionMs, now);
+  const links = result.data.spaces[0].groups[0].links;
+  assert.equal(result.purgedCount, 1);
+  assert.equal(links.find((link) => link.id === "old").purgedAt > 0, true);
+  assert.equal(links.find((link) => link.id === "recent").purgedAt, undefined);
+}
+
+function testClassifyLinkHealthSeparatesReachableBlockedAndBroken() {
+  assert.deepEqual(tabdeskCore.classifyLinkHealth({ status: 204 }), { status: "ok", code: 204 });
+  assert.deepEqual(tabdeskCore.classifyLinkHealth({ status: 403 }), { status: "blocked", code: 403 });
+  assert.deepEqual(tabdeskCore.classifyLinkHealth({ status: 404 }), { status: "broken", code: 404 });
+  assert.deepEqual(tabdeskCore.classifyLinkHealth({ timedOut: true }), { status: "timeout", code: 0 });
+  assert.deepEqual(tabdeskCore.classifyLinkHealth({ networkBlocked: true }), { status: "blocked", code: 0 });
+}
+
+function testNormalizeAndUpdateLinkColorUsesAllowedPalette() {
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "s1",
+    spaces: [{
+      id: "s1",
+      name: "S1",
+      groups: [{ id: "g1", name: "G1", color: "blue", links: [{ id: "l1", title: "L1", url: "https://color.example", color: "red" }] }]
+    }],
+    settings: {}
+  });
+  assert.equal(data.spaces[0].groups[0].color, "blue");
+  assert.equal(data.spaces[0].groups[0].links[0].color, "red");
+
+  const updated = updateLink(data, "s1", "g1", "l1", { title: "L1", url: "https://color.example", favIconUrl: "", color: "purple" });
+  assert.equal(updated.spaces[0].groups[0].links[0].color, "purple");
+  const invalid = normalizeData({ ...data, spaces: [{ ...data.spaces[0], groups: [{ ...data.spaces[0].groups[0], color: "invalid" }] }] });
+  assert.equal(invalid.spaces[0].groups[0].color, "");
+}
+
+/**
+ * 测试 normalizeData 会为缺失的 settings.spaceTemplates 字段补充默认空数组。
+ *
+ * @returns {void}
+ */
+function testNormalizeDataPreservesSpaceTemplates() {
+  /** 不含 spaceTemplates 的原始数据。 */
+  const rawData = {
+    version: 1,
+    activeSpaceId: "s1",
+    spaces: [{ id: "s1", name: "空间", groups: [] }],
+    settings: {}
+  };
+  /** 标准化后的数据。 */
+  const normalized = normalizeData(rawData);
+
+  assert.equal(Array.isArray(normalized.settings.spaceTemplates), true);
+  assert.equal(normalized.settings.spaceTemplates.length, 0);
+
+  /** 已包含模板的原始数据。 */
+  const template = {
+    id: "tpl-1",
+    name: "开发模板",
+    icon: "💻",
+    groups: [{ name: "文档", links: [{ title: "文档站", url: "https://docs.example" }] }]
+  };
+  /** 标准化后的带模板数据。 */
+  const withTemplates = normalizeData({
+    ...rawData,
+    settings: { spaceTemplates: [template] }
+  });
+
+  assert.equal(Array.isArray(withTemplates.settings.spaceTemplates), true);
+  assert.equal(withTemplates.settings.spaceTemplates.length, 1);
+  assert.equal(withTemplates.settings.spaceTemplates[0].id, "tpl-1");
+  assert.equal(withTemplates.settings.spaceTemplates[0].name, "开发模板");
+  assert.equal(withTemplates.settings.spaceTemplates[0].icon, "💻");
+  assert.equal(withTemplates.settings.spaceTemplates[0].groups.length, 1);
+  assert.equal(withTemplates.settings.spaceTemplates[0].groups[0].name, "文档");
+  assert.equal(withTemplates.settings.spaceTemplates[0].groups[0].links[0].url, "https://docs.example");
+}
+
+/**
+ * 测试 normalizeSpaceTemplate 会规范化模板字段，剔除多余字段并只保留允许的链接字段。
+ *
+ * @returns {void}
+ */
+function testNormalizeSpaceTemplateStripsExtraFields() {
+  /** 带有冗余字段的原始模板。 */
+  const rawTemplate = {
+    id: "",
+    name: "",
+    icon: "",
+    groups: [
+      {
+        name: "工具",
+        extra: true,
+        links: [
+          { title: "A", url: "https://a.example", favIconUrl: "https://a.example/fav.ico", note: "备注", color: "red", healthStatus: "ok", extra: true },
+          { title: "", url: "", note: "空链接应被过滤" }
+        ]
+      }
+    ]
+  };
+  /** 标准化后的模板。 */
+  const template = normalizeSpaceTemplate(rawTemplate);
+
+  assert.equal(typeof template.id === "string" && template.id.length > 0, true);
+  assert.equal(template.name, "未命名模板");
+  assert.equal(template.icon, "📁");
+  assert.equal(template.groups.length, 1);
+  assert.equal(template.groups[0].name, "工具");
+  assert.equal("extra" in template.groups[0], false);
+  assert.equal(template.groups[0].links.length, 1);
+  /** 链接只保留允许的字段。 */
+  assert.equal(template.groups[0].links[0].title, "A");
+  assert.equal(template.groups[0].links[0].url, "https://a.example");
+  assert.equal(template.groups[0].links[0].favIconUrl, "https://a.example/fav.ico");
+  assert.equal(template.groups[0].links[0].note, "备注");
+  assert.equal(template.groups[0].links[0].color, "red");
+  assert.equal("healthStatus" in template.groups[0].links[0], false);
+  assert.equal("extra" in template.groups[0].links[0], false);
+}
+
+/**
+ * 测试 createSpaceFromTemplate 会生成新空间，复制分组和链接，并为所有对象生成全新 ID。
+ *
+ * @returns {void}
+ */
+function testCreateSpaceFromTemplateCopiesGroupsAndLinks() {
+  /** 基础数据。 */
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "s1",
+    spaces: [{ id: "s1", name: "源空间", groups: [] }],
+    settings: {}
+  });
+  /** 源模板。 */
+  const template = {
+    id: "tpl-1",
+    name: "开发模板",
+    icon: "💻",
+    groups: [
+      {
+        name: "文档",
+        links: [{ title: "文档站", url: "https://docs.example", favIconUrl: "https://docs.example/fav.ico", note: "主站", color: "blue" }]
+      },
+      {
+        name: "工具",
+        links: [{ title: "工具站", url: "https://tools.example" }]
+      }
+    ]
+  };
+
+  /** 从模板创建后的数据。 */
+  const result = createSpaceFromTemplate(data, template, "我的开发空间", "🚀");
+  /** 新创建的空间。 */
+  const newSpace = result.spaces.find((space) => space.name === "我的开发空间");
+
+  assert.equal(typeof newSpace, "object");
+  assert.equal(newSpace.name, "我的开发空间");
+  assert.equal(newSpace.icon, "🚀");
+  assert.equal(newSpace.groups.length, 2);
+  assert.equal(newSpace.groups[0].name, "文档");
+  assert.equal(newSpace.groups[0].links.length, 1);
+  assert.equal(newSpace.groups[0].links[0].title, "文档站");
+  assert.equal(newSpace.groups[0].links[0].url, "https://docs.example");
+  assert.equal(newSpace.groups[0].links[0].favIconUrl, "https://docs.example/fav.ico");
+  assert.equal(newSpace.groups[0].links[0].note, "主站");
+  assert.equal(newSpace.groups[0].links[0].color, "blue");
+  assert.equal(newSpace.groups[1].name, "工具");
+  assert.equal(newSpace.groups[1].links[0].url, "https://tools.example");
+
+  /** 所有分组和链接都应获得全新 ID，不复用模板内 ID。 */
+  assert.equal(newSpace.id !== template.id, true);
+  assert.equal(typeof newSpace.id === "string" && newSpace.id.length > 0, true);
+  for (const group of newSpace.groups) {
+    assert.equal(typeof group.id === "string" && group.id.length > 0, true);
+    for (const link of group.links) {
+      assert.equal(typeof link.id === "string" && link.id.length > 0, true);
+    }
+  }
+
+  /** 新空间应被激活。 */
+  assert.equal(result.activeSpaceId, newSpace.id);
+  /** 原空间仍应存在。 */
+  assert.equal(result.spaces.length, 2);
+  assert.equal(result.spaces.find((space) => space.id === "s1") !== undefined, true);
+}
+
+/**
+ * 测试 createSpaceFromTemplate 使用默认名称和图标时仍可正常工作。
+ *
+ * @returns {void}
+ */
+function testCreateSpaceFromTemplateUsesDefaultsWhenNameEmpty() {
+  /** 基础数据。 */
+  const data = normalizeData({
+    version: 1,
+    activeSpaceId: "s1",
+    spaces: [{ id: "s1", name: "源", groups: [] }],
+    settings: {}
+  });
+  /** 仅含一个分组的模板。 */
+  const template = {
+    id: "tpl-1",
+    name: "模板",
+    icon: "📁",
+    groups: [{ name: "G1", links: [] }]
+  };
+
+  /** 名称和图标为空时创建空间。 */
+  const result = createSpaceFromTemplate(data, template, "", "");
+  /** 新创建的空间。 */
+  const newSpace = result.spaces.find((space) => space.name === "模板");
+
+  assert.equal(newSpace !== undefined, true);
+  assert.equal(newSpace.icon, "📁");
+}
+
 /**
  * 执行全部核心逻辑测试。
  *
@@ -2711,6 +3119,21 @@ async function runTests() {
   testMergeRespectsLinkTombstone();
   testMergeRespectsGroupTombstone();
   testMergeRespectsSpaceTombstone();
+  testMergeSessionSnapshotsUnionsById();
+  testMergeSessionSnapshotsAppliesLimitAndRetention();
+  testFindDuplicateLinksAcrossGroups();
+  testDeduplicateLinksCreatesTombstones();
+  testTrashListsOnlyTopLevelRecoverableTombstones();
+  testRestoreTrashLinkClearsTombstoneAndWinsVersionConflict();
+  testPurgeTrashLinkKeepsMinimalSyncTombstone();
+  testPurgeExpiredTrashPurgesOnlyExpiredItems();
+  testClassifyLinkHealthSeparatesReachableBlockedAndBroken();
+  testNormalizeAndUpdateLinkColorUsesAllowedPalette();
+  testNormalizeDataPreservesSpaceTemplates();
+  testNormalizeSpaceTemplateStripsExtraFields();
+  testCreateSpaceFromTemplateCopiesGroupsAndLinks();
+  testCreateSpaceFromTemplateUsesDefaultsWhenNameEmpty();
+
   console.log("所有核心逻辑测试通过");
 }
 

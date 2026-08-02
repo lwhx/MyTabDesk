@@ -24,6 +24,9 @@
       tabtab: require("./core/tabtab.js"),
       io: require("./core/io.js"),
       reorder: require("./core/reorder.js"),
+      trash: require("./core/trash.js"),
+      health: require("./core/health.js"),
+      aiGrouping: require("./core/ai-grouping.js"),
       merge: require("./core/merge.js"),
       crypto: require("./core/crypto.js")
     };
@@ -38,6 +41,9 @@
       tabtab: root.MyTabDeskCoreTabtab,
       io: root.MyTabDeskCoreIo,
       reorder: root.MyTabDeskCoreReorder,
+      trash: root.MyTabDeskCoreTrash,
+      health: root.MyTabDeskCoreHealth,
+      aiGrouping: root.MyTabDeskCoreAiGrouping,
       merge: root.MyTabDeskCoreMerge,
       crypto: root.MyTabDeskCoreCrypto
     };
@@ -54,6 +60,9 @@
     modules.tabtab,
     modules.io,
     modules.reorder,
+    modules.trash,
+    modules.health,
+    modules.aiGrouping,
     modules.merge,
     modules.crypto
   );

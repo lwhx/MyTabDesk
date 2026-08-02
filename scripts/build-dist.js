@@ -21,6 +21,14 @@ const rootFiles = [
   "newtab-actions.js",
   "newtab-render.js",
   "newtab-notifications.js",
+  "newtab-sessions.js",
+  "newtab-trash.js",
+  "newtab-health.js",
+  "newtab-stats.js",
+  "newtab-lifecycle.js",
+  "newtab-ai-grouping.js",
+  "newtab-favicon-cache.js",
+  "newtab-command-palette.js",
   "newtab-main.js"
 ];
 
