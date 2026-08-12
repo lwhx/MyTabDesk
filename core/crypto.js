@@ -14,6 +14,12 @@
   const { createDefaultData, migrateData } = normalize;
   const { createBackupSafeData, extractBackupData } = io;
   const { getDataUpdatedAt } = syncSettings;
+const MIN_PBKDF2_ITERATIONS = 100000;
+const MAX_PBKDF2_ITERATIONS = 1000000;
+const AES_GCM_SALT_BYTES = 16;
+const AES_GCM_IV_BYTES = 12;
+const AES_GCM_MIN_PAYLOAD_BYTES = 16;
+const AES_GCM_MAX_PAYLOAD_BYTES = 50 * 1024 * 1024;
 /**
  * 将字节数组转换为 Base64 文本。
  *
@@ -48,6 +54,50 @@ function base64ToBytes(text) {
   }
 
   return bytes;
+}
+
+/**
+ * 校验并解码加密备份中的 Base64 字段。
+ *
+ * @param {string} value Base64 字段值。
+ * @param {number} minimumBytes 最小字节数。
+ * @param {number} maximumBytes 最大字节数。
+ * @returns {Uint8Array} 解码后的字节数组。
+ * @throws {Error} 字段格式或长度不合法时抛出错误。
+ */
+function decodeValidatedBase64(value, minimumBytes, maximumBytes) {
+  if (typeof value !== "string" || value.length === 0 || value.length % 4 !== 0 || !/^[A-Za-z0-9+/]+={0,2}$/.test(value)) {
+    throw new Error("加密备份参数无效");
+  }
+  const estimatedBytes = Math.floor(value.length * 3 / 4) - (value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0);
+  if (estimatedBytes < minimumBytes || estimatedBytes > maximumBytes) {
+    throw new Error("加密备份参数无效");
+  }
+  const bytes = base64ToBytes(value);
+  if (bytes.length !== estimatedBytes) {
+    throw new Error("加密备份参数无效");
+  }
+  return bytes;
+}
+
+/**
+ * 校验 AES-GCM 加密备份头并返回已解码参数。
+ *
+ * @param {object} encryptedData 加密备份对象。
+ * @returns {{salt:Uint8Array,iv:Uint8Array,cipherBytes:Uint8Array,iterations:number}} 已校验参数。
+ * @throws {Error} 任一参数不满足安全边界时抛出错误。
+ */
+function validateAesGcmParameters(encryptedData) {
+  const iterations = encryptedData && encryptedData.iterations;
+  if (!Number.isInteger(iterations) || iterations < MIN_PBKDF2_ITERATIONS || iterations > MAX_PBKDF2_ITERATIONS) {
+    throw new Error("加密备份参数无效");
+  }
+  return {
+    iterations,
+    salt: decodeValidatedBase64(encryptedData.salt, AES_GCM_SALT_BYTES, AES_GCM_SALT_BYTES),
+    iv: decodeValidatedBase64(encryptedData.iv, AES_GCM_IV_BYTES, AES_GCM_IV_BYTES),
+    cipherBytes: decodeValidatedBase64(encryptedData.payload, AES_GCM_MIN_PAYLOAD_BYTES, AES_GCM_MAX_PAYLOAD_BYTES)
+  };
 }
 
 /**
@@ -128,22 +178,17 @@ async function aesGcmEncrypt(plaintext, password) {
  * @returns {Promise<string>} 解密后的明文 JSON 字符串。
  */
 async function aesGcmDecrypt(encryptedData, password) {
-  /** 随机盐值。 */
-  const salt = base64ToBytes(encryptedData.salt);
-  /** AES-GCM 初始化向量。 */
-  const iv = base64ToBytes(encryptedData.iv);
+  const parameters = validateAesGcmParameters(encryptedData);
   /** AES-GCM 密钥。 */
-  const key = await deriveAesKey(password, salt, encryptedData.iterations);
-  /** 密文字节。 */
-  const cipherBytes = base64ToBytes(encryptedData.payload);
+  const key = await deriveAesKey(password, parameters.salt, parameters.iterations);
   /** 解密后的明文字节。 */
   const plainBuffer = await crypto.subtle.decrypt(
     {
       name: "AES-GCM",
-      iv
+      iv: parameters.iv
     },
     key,
-    cipherBytes
+    parameters.cipherBytes
   );
 
   return new TextDecoder().decode(plainBuffer);
@@ -374,6 +419,8 @@ function clearAllData() {
   return {
     bytesToBase64,
   base64ToBytes,
+  decodeValidatedBase64,
+  validateAesGcmParameters,
   deriveAesKey,
   aesGcmEncrypt,
   aesGcmDecrypt,

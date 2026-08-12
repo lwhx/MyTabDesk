@@ -29,6 +29,7 @@ function createBackgroundHarness(initialStorage = {}, options = {}) {
   const context = {
     URL,
     console: quietConsole,
+    importScripts() {},
     setTimeout() { return 1; },
     clearTimeout() {},
     chrome: {
@@ -87,6 +88,7 @@ function createBackgroundHarness(initialStorage = {}, options = {}) {
         onUpdated: { addListener(handler) { listeners.tabUpdated = handler; } },
         async query(queryInfo) {
           if (queryInfo && queryInfo.url) return [{ id: 7, url: "chrome-extension://test/newtab.html" }];
+          if (options.onTabsQuery) await options.onTabsQuery(storage);
           return options.currentTabs || [{ id: 7, url: "chrome-extension://test/newtab.html" }];
         },
         create(config) {
@@ -141,6 +143,11 @@ function createBackgroundHarness(initialStorage = {}, options = {}) {
     }
   };
 
+  vm.runInNewContext(fs.readFileSync(path.join(projectRoot, "message-protocol.js"), "utf8"), context);
+  vm.runInNewContext(fs.readFileSync(path.join(projectRoot, "background-message-router.js"), "utf8"), context);
+  vm.runInNewContext(fs.readFileSync(path.join(projectRoot, "background-notifications.js"), "utf8"), context);
+  vm.runInNewContext(fs.readFileSync(path.join(projectRoot, "background-page-messaging.js"), "utf8"), context);
+  vm.runInNewContext(fs.readFileSync(path.join(projectRoot, "workspace-repository.js"), "utf8"), context);
   vm.runInNewContext(fs.readFileSync(path.join(projectRoot, "background.js"), "utf8"), context);
   return {
     listeners, runtimeMessages, tabMessages, storage, alarmsCreated, windowsCreated,
@@ -913,6 +920,38 @@ async function testScheduledSaveAlarmWritesCurrentTabsToConfiguredGroup() {
   assert.equal(harness.storage.my_tab_desk_data.settings.scheduledSave.lastRunDate.length, 10);
 }
 
+async function testScheduledSavePreservesConcurrentWorkspaceChanges() {
+  const now = new Date();
+  const time = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  const data = {
+    version: 1,
+    activeSpaceId: "space-a",
+    spaces: [{ id: "space-a", name: "工作", groups: [{ id: "group-a", name: "每日", links: [] }] }],
+    settings: { scheduledSave: { enabled: true, time, spaceId: "space-a", groupId: "group-a" } }
+  };
+  const concurrentLink = {
+    id: "link-concurrent",
+    title: "页面并发保存",
+    url: "https://concurrent.example",
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+  const harness = createBackgroundHarness({ my_tab_desk_data: data }, {
+    currentTabs: [{ id: 1, windowId: 1, url: "https://scheduled.example", title: "Scheduled", active: true, pinned: false }],
+    async onTabsQuery(storage) {
+      storage.my_tab_desk_data = structuredClone(storage.my_tab_desk_data);
+      storage.my_tab_desk_data.spaces[0].groups[0].links.push(concurrentLink);
+    }
+  });
+
+  await harness.listeners.alarm({ name: "MyTabDeskScheduledSave" });
+  await flushPromises();
+
+  const links = harness.storage.my_tab_desk_data.spaces[0].groups[0].links;
+  assert.equal(links.some((link) => link.id === concurrentLink.id), true);
+  assert.equal(links.some((link) => link.url === "https://scheduled.example"), true);
+}
+
 async function runTests() {
   await testBackgroundUsesRuntimeMessagingForExtensionPage();
   await testPageRunsAutoSyncForRuntimeMessage();
@@ -945,6 +984,7 @@ async function runTests() {
   await testTabLifecycleTracksActiveDomainTime();
   await testLifecycleStatusProtectsPinnedAudibleAndWhitelistedTabs();
   await testScheduledSaveAlarmWritesCurrentTabsToConfiguredGroup();
+  await testScheduledSavePreservesConcurrentWorkspaceChanges();
   console.log("浏览器消息测试通过");
 }
 

@@ -913,6 +913,24 @@ async function testRestoreEncryptedBackupRejectsWrongPassword() {
   }, /密码错误或文件损坏/);
 }
 
+async function testRestoreEncryptedBackupRejectsUnsafeParameters() {
+  const backup = JSON.parse(await createEncryptedBackup(createDefaultData(), "secret", "device-fixed"));
+  const invalidBackups = [
+    { ...backup, iterations: 1000001 },
+    { ...backup, iterations: 600000.5 },
+    { ...backup, salt: "AA==" },
+    { ...backup, iv: "AA==" },
+    { ...backup, payload: "AA==" }
+  ];
+
+  for (const invalidBackup of invalidBackups) {
+    await assert.rejects(
+      restoreEncryptedBackup(JSON.stringify(invalidBackup), "secret"),
+      /密码错误或文件损坏/
+    );
+  }
+}
+
 /**
  * 测试导入备份会识别旧数据和不同设备。
  *
@@ -3078,6 +3096,7 @@ async function runTests() {
   await testRestoreEncryptedBackupReadsLegacyXorBackup();
   await testRestoreEncryptedBackupRejectsUnknownEncryption();
   await testRestoreEncryptedBackupRejectsWrongPassword();
+  await testRestoreEncryptedBackupRejectsUnsafeParameters();
   testDetectImportConflictFlagsOlderAndDifferentDevice();
   testExportDataOmitsTombstones();
   testExportDataUsesTabTabCompatibleShape();

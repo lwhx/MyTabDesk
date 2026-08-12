@@ -36,8 +36,11 @@ const syncStateDirtyFields = new Set();
  */
 let syncLockChain = Promise.resolve();
 
-/** 当前页面内的存储写入串行链；不支持 Web Locks 时作为回退。 */
-let storageLockChain = Promise.resolve();
+const workspaceRepository = root.MyTabDeskWorkspaceRepository.createWorkspaceRepository({
+  storageArea: typeof chrome !== "undefined" && chrome.storage ? chrome.storage.local : null,
+  storageKey: app.STORAGE_KEY,
+  lockManager: typeof navigator !== "undefined" ? navigator.locks : null
+});
 
 /**
  * 标记工作台数据已变更，后续 hasWorkspaceDataChanged 调用时会返回 true。
@@ -102,13 +105,7 @@ function withSyncLock(fn) {
  * @returns {Promise<*>} fn 的返回值。
  */
 function withStorageLock(fn) {
-  if (typeof navigator !== "undefined" && navigator.locks && typeof navigator.locks.request === "function") {
-    return navigator.locks.request("mytabdesk-storage-write", fn);
-  }
-
-  const nextChain = storageLockChain.then(fn, fn);
-  storageLockChain = nextChain.then(() => undefined, () => undefined);
-  return nextChain;
+  return workspaceRepository.withLock(fn);
 }
 
 /**

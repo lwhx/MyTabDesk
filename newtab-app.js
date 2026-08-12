@@ -57,9 +57,11 @@ const {
 /**
  * 页面运行时状态，集中保存数据、搜索词、批量选择和拖拽中的对象。
  */
-const state = {
+const initialState = {
   /** 当前工作台全量数据。 */
   data: null,
+  /** 页面初始化和事件绑定是否已经完成。 */
+  initialized: false,
   /** 当前浏览器窗口中可保存的标签页列表。 */
   currentTabs: [],
   /** 当前主区域搜索关键词。 */
@@ -119,6 +121,17 @@ const state = {
   /** 同步操作日志，仅保存在内存中，记录最近 20 条同步操作。 */
   syncLog: []
 };
+const store = root.MyTabDeskPageStore.createPageStore(initialState);
+const state = store.getState();
+const eventBus = root.MyTabDeskPageEventBus.createEventBus();
+const stateController = root.MyTabDeskPageStateController.createPageStateController({
+  store,
+  eventBus,
+  persist: async (metadata) => {
+    root.MyTabDeskUtils.markDirty();
+    await root.MyTabDeskUtils.saveData({ skipAutoSync: Boolean(metadata.skipAutoSync) });
+  }
+});
 
 /**
  * 页面 DOM 元素引用集合，初始化后由各渲染和事件函数复用。
@@ -254,6 +267,9 @@ root.MyTabDeskPage = {
   clearAllData,
   getPathValue,
   state,
+  store,
+  eventBus,
+  stateController,
   elements,
   SPACE_ICON_OPTIONS,
   UI_DEFAULT_SPACE_ICON,

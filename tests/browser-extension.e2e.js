@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { chromium } = require("playwright");
+const { removeDirectoryWithRetry, openCreateSpaceDialog } = require("./e2e-helpers.js");
 
 const projectRoot = path.resolve(__dirname, "..");
 const extensionPath = path.join(projectRoot, "dist", "MyTabDesk-Chrome");
@@ -35,18 +36,6 @@ async function waitFor(check, message, timeoutMs = 10000) {
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
   throw new Error(message);
-}
-
-async function removeDirectoryWithRetry(directory) {
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    try {
-      fs.rmSync(directory, { recursive: true, force: true });
-      return;
-    } catch (error) {
-      if (error.code !== "EBUSY" || attempt === 4) throw error;
-      await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
-    }
-  }
 }
 
 async function testLoadedExtensionPersistsWorkspaceAndConsumesBackgroundSave() {
@@ -86,8 +75,43 @@ async function testLoadedExtensionPersistsWorkspaceAndConsumesBackgroundSave() {
     assert.equal(await page.locator("#offlineExportBtn").textContent(), "导出完整备份");
     assert.equal(await page.locator("#exportTabTabBtn").textContent(), "导出 TabTab 格式");
 
-    await page.locator("#createSpaceBtn").click();
-    await page.locator("#createBlankSpaceBtn").click();
+    await page.waitForFunction(() => Boolean(
+      globalThis.MyTabDeskPage
+      && globalThis.MyTabDeskPage.state.initialized
+    ));
+    const stateWiring = await page.evaluate(async () => {
+      const app = globalThis.MyTabDeskPage;
+      const stateReference = app.state;
+      let viewEvents = 0;
+      const waitForRender = () => new Promise((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(resolve));
+      });
+      const unsubscribe = app.eventBus.on("view:changed", () => {
+        viewEvents += 1;
+      });
+      app.stateController.navigate("settings", { source: "e2e-state-wiring" });
+      await waitForRender();
+      const settingsVisible = !document.querySelector("#settingsView").hidden;
+      app.stateController.navigate("workspace", { source: "e2e-state-wiring" });
+      await waitForRender();
+      unsubscribe();
+      return {
+        sharedReference: app.store.getState() === stateReference && app.state === stateReference,
+        stableReference: app.store.getState() === stateReference,
+        viewEvents,
+        settingsVisible,
+        workspaceVisible: !document.querySelector("#groupList").hidden
+      };
+    });
+    assert.deepEqual(stateWiring, {
+      sharedReference: true,
+      stableReference: true,
+      viewEvents: 2,
+      settingsVisible: true,
+      workspaceVisible: true
+    });
+
+    await openCreateSpaceDialog(page);
     await page.locator("#createSpaceNameInput").fill("E2E 空间");
     await page.locator("#confirmCreateSpaceBtn").click();
     try {
@@ -815,34 +839,31 @@ async function testLoadedExtensionPersistsWorkspaceAndConsumesBackgroundSave() {
       "刷新扩展页面后保存数据未恢复"
     );
 
-    // tabs.discard 在 headless Chromium 中可能终止页面 CDP 会话，改由 Service Worker 直接验证生产清理函数。
-    // 长时间 E2E 期间 MV3 Worker 可能被回收，不能复用启动时的失效句柄。
-    let activeServiceWorker = context.serviceWorkers().find((worker) => new URL(worker.url()).host === extensionId);
-    if (!activeServiceWorker) {
-      await page.evaluate(() => chrome.runtime.sendMessage({ type: "list-session-snapshots" }));
-      activeServiceWorker = await context.waitForEvent("serviceworker", { timeout: 15000 });
-    }
-    const discardResult = await activeServiceWorker.evaluate(async () => {
+    // headless Chromium 执行 tabs.discard 可能关闭 CDP 目标；E2E 验证共用清理入口的 close 分支，discard 分支由消息测试覆盖。
+    const cleanupCloseResult = await page.evaluate(async () => {
       const extensionTabs = await chrome.tabs.query({ url: chrome.runtime.getURL("newtab.html") });
       const created = await chrome.tabs.create({
         windowId: extensionTabs[0].windowId,
-        url: "https://example.com/cleanup-discard",
+        url: "https://example.com/cleanup-close",
         active: false
       });
       for (let attempt = 0; attempt < 100; attempt += 1) {
         const tab = await chrome.tabs.get(created.id);
-        if (tab.url.includes("/cleanup-discard") && tab.active === false) break;
+        if (tab.url.includes("/cleanup-close") && tab.active === false) break;
         await new Promise((resolve) => setTimeout(resolve, 50));
       }
       const tab = await chrome.tabs.get(created.id);
-      return globalThis.cleanupCurrentWindowTabs("discard", [{
-        tabId: tab.id,
-        url: tab.url,
-        windowId: tab.windowId
-      }]);
+      return chrome.runtime.sendMessage({
+        type: "close-saved-tabs",
+        savedTabs: [{
+          tabId: tab.id,
+          url: tab.url,
+          windowId: tab.windowId
+        }]
+      });
     });
-    assert.equal(discardResult.success, true);
-    assert.equal(discardResult.affected, 1, JSON.stringify(discardResult));
+    assert.equal(cleanupCloseResult.success, true);
+    assert.equal(cleanupCloseResult.affected, 1, JSON.stringify(cleanupCloseResult));
   } finally {
     if (context) await context.close();
     await removeDirectoryWithRetry(userDataDir);

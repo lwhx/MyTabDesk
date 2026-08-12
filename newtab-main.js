@@ -8,6 +8,18 @@ const { getElement, loadData, saveData, createWorkspaceSnapshot, debounce } = ro
  * @type {Array<{element: HTMLElement, event: string, handler: Function}>}
  */
 const registeredEventListeners = [];
+const stateSubscriptions = [];
+
+function bindStateCommunication() {
+  if (stateSubscriptions.length > 0) return;
+  stateSubscriptions.push(app.eventBus.on("workspace:committed", () => root.MyTabDeskRender.renderAll()));
+  stateSubscriptions.push(app.eventBus.on("workspace:replaced", () => root.MyTabDeskRender.renderAll()));
+  stateSubscriptions.push(app.eventBus.on("view:changed", () => root.MyTabDeskRender.renderAll()));
+}
+
+function cleanupStateCommunication() {
+  for (const unsubscribe of stateSubscriptions.splice(0)) unsubscribe();
+}
 
 /**
  * 安全地注册事件监听器，自动记录以便后续清理。
@@ -441,6 +453,7 @@ function bindElements() {
  * @returns {Promise<void>} 初始化完成后结束。
  */
 async function init() {
+  state.initialized = false;
   // 初始化前先清理可能存在的事件监听器，避免重复绑定
   cleanupEventListeners();
   bindElements();
@@ -448,6 +461,7 @@ async function init() {
   state.lastWorkspaceSnapshot = createWorkspaceSnapshot();
   await saveData({ skipAutoSync: true });
   bindEvents();
+  bindStateCommunication();
   root.MyTabDeskSessions.bindSessionEvents();
   await root.MyTabDeskTrash.purgeExpiredItems();
   root.MyTabDeskCommandPalette.bindCommandPalette();
@@ -457,6 +471,7 @@ async function init() {
   await root.MyTabDeskFaviconCache.loadCache();
   root.MyTabDeskSync.scheduleAutoSync();
   await root.MyTabDeskActions.refreshCurrentTabs();
+  state.initialized = true;
   // state.data 就绪后，消费 background 暂存的右键保存数据
   await root.MyTabDeskNotifications.checkPendingSaveData();
   // 消费后台 alarms 唤醒标记：如果后台触发同步时页面未打开，现在补同步
@@ -477,6 +492,7 @@ function destroy() {
 
   /** 清理所有已注册的事件监听器，防止内存泄漏 */
   cleanupEventListeners();
+  cleanupStateCommunication();
 
   /** 清理所有状态。 */
   state.data = null;
@@ -507,7 +523,9 @@ root.MyTabDeskMain = {
   bindElements,
   init,
   destroy,
-  cleanupEventListeners
+  cleanupEventListeners,
+  bindStateCommunication,
+  cleanupStateCommunication
 };
 
 document.addEventListener("DOMContentLoaded", () => {

@@ -8,10 +8,12 @@
     return ({ space: "空间", group: "分组", link: "链接" })[type] || "项目";
   }
 
-  async function persistTrashChange() {
-    root.MyTabDeskUtils.markDirty();
-    await root.MyTabDeskUtils.saveData({ skipAutoSync: false });
-    root.MyTabDeskRender.renderAll();
+  async function commitTrashChange(mutator, reason) {
+    await app.stateController.commitWorkspaceChange(mutator, {
+      reason,
+      source: "trash",
+      skipAutoSync: false
+    });
   }
 
   function renderTrash() {
@@ -75,14 +77,13 @@
   }
 
   function openTrashView() {
-    state.viewMode = "trash";
-    state.createSpaceMenuOpen = false;
-    root.MyTabDeskRender.renderAll();
+    app.stateController.navigate("trash", { source: "trash" });
   }
 
   async function restoreItem(item) {
-    state.data = restoreTrashItem(state.data, item);
-    await persistTrashChange();
+    await commitTrashChange((draft) => {
+      draft.data = restoreTrashItem(draft.data, item);
+    }, "trash-item-restored");
     root.MyTabDeskNotifications.showToast(`已恢复${getTypeLabel(item.type)}“${item.title}”`, "success");
   }
 
@@ -92,8 +93,9 @@
       "永久删除"
     );
     if (!confirmed) return;
-    state.data = purgeTrashItem(state.data, item);
-    await persistTrashChange();
+    await commitTrashChange((draft) => {
+      draft.data = purgeTrashItem(draft.data, item);
+    }, "trash-item-purged");
   }
 
   async function emptyTrash() {
@@ -104,17 +106,19 @@
       "清空回收站"
     );
     if (!confirmed) return;
-    let nextData = state.data;
-    for (const item of items) nextData = purgeTrashItem(nextData, item);
-    state.data = nextData;
-    await persistTrashChange();
+    await commitTrashChange((draft) => {
+      let nextData = draft.data;
+      for (const item of items) nextData = purgeTrashItem(nextData, item);
+      draft.data = nextData;
+    }, "trash-emptied");
   }
 
   async function purgeExpiredItems() {
     const result = purgeExpiredTrash(state.data, RETENTION_MS);
     if (result.purgedCount === 0) return;
-    state.data = result.data;
-    await persistTrashChange();
+    await commitTrashChange((draft) => {
+      draft.data = result.data;
+    }, "trash-expired-purged");
   }
 
   root.MyTabDeskTrash = {

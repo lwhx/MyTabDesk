@@ -122,9 +122,7 @@
   }
 
   async function openStatsView() {
-    state.viewMode = "stats";
-    state.createSpaceMenuOpen = false;
-    root.MyTabDeskRender.renderAll();
+    app.stateController.navigate("stats", { source: "stats" });
     await loadStats();
   }
 

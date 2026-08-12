@@ -4,6 +4,13 @@
  * 负责处理插件图标点击、右键菜单注册、右键菜单消息暂存和系统通知展示。
  */
 
+globalThis.importScripts("message-protocol.js", "background-message-router.js", "background-notifications.js", "background-page-messaging.js", "workspace-repository.js");
+
+const notificationService = globalThis.MyTabDeskBackgroundNotifications.createNotificationService(chrome);
+const pageMessagingService = globalThis.MyTabDeskBackgroundPageMessaging.createPageMessagingService(chrome);
+const { showNotification } = notificationService;
+const { sendMessageToExtensionPages, hasOpenExtensionPage, notifyMyTabDeskPage } = pageMessagingService;
+
 /**
  * 右键菜单 ID 集合，用于统一注册和识别菜单点击来源。
  */
@@ -28,6 +35,11 @@ const AUTO_SYNC_ALARM_NAME = "MyTabDeskAutoSync";
 const SESSION_SNAPSHOT_ALARM_NAME = "MyTabDeskSessionSnapshot";
 const SCHEDULED_SAVE_ALARM_NAME = "MyTabDeskScheduledSave";
 const WORKSPACE_STORAGE_KEY = "my_tab_desk_data";
+const workspaceRepository = globalThis.MyTabDeskWorkspaceRepository.createWorkspaceRepository({
+  storageArea: chrome.storage.local,
+  storageKey: WORKSPACE_STORAGE_KEY,
+  lockManager: typeof navigator !== "undefined" ? navigator.locks : null
+});
 
 /** 自动会话快照间隔，单位为分钟。 */
 const SESSION_SNAPSHOT_PERIOD_MINUTES = 15;
@@ -770,46 +782,6 @@ async function cleanupCurrentWindowTabs(mode, savedTabs = []) {
 }
 
 /**
- * 向所有已打开的 MyTabDesk 扩展页面发送消息。
- *
- * 扩展页面（newtab.html）监听的是 chrome.runtime.onMessage，
- * 因此必须使用 chrome.runtime.sendMessage 而非 chrome.tabs.sendMessage
- * （后者只能到达 content script，无法投递到扩展页面）。
- *
- * @param {object} message 消息内容。
- * @returns {void}
- */
-function sendMessageToExtensionPages(message) {
-  try {
-    chrome.runtime.sendMessage(message);
-  } catch (error) {
-    console.warn("消息发送异常:", error);
-  }
-}
-
-/**
- * 检查是否有已打开的 MyTabDesk 扩展页面。
- *
- * @returns {Promise<boolean>} 有扩展页面打开时返回 true。
- */
-async function hasOpenExtensionPage() {
-  const tabs = await chrome.tabs.query({ url: chrome.runtime.getURL("newtab.html") });
-  return tabs.length > 0;
-}
-
-/**
- * 通知已打开的 MyTabDesk 页面有新数据。
- *
- * @param {string} eventType 事件类型。
- * @returns {Promise<void>}
- */
-async function notifyMyTabDeskPage(eventType) {
-  sendMessageToExtensionPages({
-    type: eventType
-  });
-}
-
-/**
  * 设置后台自动同步闹钟，避免 MV3 Service Worker 休眠导致定时任务丢失。
  *
  * @returns {void}
@@ -846,36 +818,58 @@ async function executeScheduledSave() {
   if (currentTime !== config.time) return { success: false, reason: "time-mismatch" };
   const dayKey = getLocalDayKey(now.getTime());
   if (config.lastRunDate === dayKey) return { success: false, reason: "already-ran" };
-  const space = data.spaces.find((item) => item.id === config.spaceId && !item.deletedAt);
-  const group = space && space.groups.find((item) => item.id === config.groupId && !item.deletedAt);
-  if (!space || !group) return { success: false, reason: "target-missing" };
   const tabs = (await chrome.tabs.query({ currentWindow: true })).filter((tab) => isSavableWebUrl(tab.url));
-  const existingUrls = new Set(group.links.filter((link) => !link.deletedAt).map((link) => link.url));
-  const timestamp = Date.now();
-  let added = 0;
-  for (const tab of tabs) {
-    if (existingUrls.has(tab.url)) continue;
-    group.links.push({
-      id: `scheduled-${timestamp}-${added}`,
-      title: tab.title || tab.url,
-      url: tab.url,
-      favIconUrl: tab.favIconUrl || "",
-      note: "",
-      color: "",
-      createdAt: timestamp,
-      updatedAt: timestamp
-    });
-    existingUrls.add(tab.url);
-    added += 1;
-  }
-  group.updatedAt = timestamp;
-  space.updatedAt = timestamp;
-  data.settings.scheduledSave.lastRunDate = dayKey;
-  data.settings.updatedAt = timestamp;
-  await chrome.storage.local.set({ [WORKSPACE_STORAGE_KEY]: data });
+  let outcome = { success: false, reason: "skipped" };
+  const result = await workspaceRepository.update(async (latestData) => {
+    const latestConfig = latestData && latestData.settings && latestData.settings.scheduledSave;
+    if (!latestData || !latestConfig || !latestConfig.enabled) {
+      outcome = { success: false, reason: "disabled" };
+      return null;
+    }
+    if (latestConfig.time !== currentTime) {
+      outcome = { success: false, reason: "time-mismatch" };
+      return null;
+    }
+    if (latestConfig.lastRunDate === dayKey) {
+      outcome = { success: false, reason: "already-ran" };
+      return null;
+    }
+    const space = latestData.spaces.find((item) => item.id === latestConfig.spaceId && !item.deletedAt);
+    const group = space && space.groups.find((item) => item.id === latestConfig.groupId && !item.deletedAt);
+    if (!space || !group) {
+      outcome = { success: false, reason: "target-missing" };
+      return null;
+    }
+    const existingUrls = new Set(group.links.filter((link) => !link.deletedAt).map((link) => link.url));
+    const timestamp = Date.now();
+    let added = 0;
+    for (const tab of tabs) {
+      if (existingUrls.has(tab.url)) continue;
+      group.links.push({
+        id: `scheduled-${timestamp}-${added}`,
+        title: tab.title || tab.url,
+        url: tab.url,
+        favIconUrl: tab.favIconUrl || "",
+        note: "",
+        color: "",
+        createdAt: timestamp,
+        updatedAt: timestamp
+      });
+      existingUrls.add(tab.url);
+      added += 1;
+    }
+    group.updatedAt = timestamp;
+    space.updatedAt = timestamp;
+    latestConfig.lastRunDate = dayKey;
+    latestData.settings.updatedAt = timestamp;
+    outcome = { success: true, added, spaceName: space.name, groupName: group.name, spaceId: space.id };
+    return latestData;
+  });
+  if (!result || !outcome.success) return outcome;
+  const { added } = outcome;
   if (added > 0) {
-    await recordUsageEvent({ eventType: "save", linkCount: added, spaceId: space.id });
-    showNotification("定时保存完成", `已保存 ${added} 个标签到「${space.name} / ${group.name}」`, "success");
+    await recordUsageEvent({ eventType: "save", linkCount: added, spaceId: outcome.spaceId });
+    showNotification("定时保存完成", `已保存 ${added} 个标签到「${outcome.spaceName} / ${outcome.groupName}」`, "success");
   }
   return { success: true, added };
 }
@@ -918,42 +912,6 @@ async function consumeAutoSyncWakeFlag() {
     console.error("读取自动同步待处理标记失败:", error);
     return 0;
   }
-}
-
-/**
- * 显示 Chrome 系统通知。
- *
- * @param {string} title 通知标题。
- * @param {string} message 通知内容。
- * @param {string} type 通知类型，支持 success、error、warning、info。
- * @returns {void}
- */
-function showNotification(title, message, type = "info") {
-  /** 不同通知类型对应的 Chrome 通知配置。 */
-  const configs = {
-    success: { priority: 1 },
-    error: { priority: 2 },
-    warning: { priority: 1 },
-    info: { priority: 1 }
-  };
-  /** 当前通知类型对应的配置。 */
-  const config = configs[type] || configs.info;
-
-  chrome.notifications.create(
-    `mytabdesk-${Date.now()}`,
-    {
-      type: "basic",
-      iconUrl: chrome.runtime.getURL("assets/icon48.png"),
-      title: title,
-      message: message,
-      priority: config.priority
-    },
-    (notificationId) => {
-      setTimeout(() => {
-        chrome.notifications.clear(notificationId, () => {});
-      }, 5000);
-    }
-  );
 }
 
 /**
@@ -1079,176 +1037,102 @@ async function releaseAutoSyncLease(leaseId) {
   return true;
 }
 
-/**
- * 监听来自扩展页面的消息。
- */
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === "get-tab-lifecycle") {
-    withLifecycleLock(() => getLifecycleStatus()).then(sendResponse).catch((error) => {
-      sendResponse({ config: DEFAULT_LIFECYCLE_CONFIG, tabs: [], error: error.message });
-    });
-    return true;
-  }
+async function replaceSessionSnapshots(snapshots) {
+  return withSessionHistoryLock(async () => {
+    const incoming = Array.isArray(snapshots) ? snapshots : [];
+    const limit = await getSessionSnapshotLimit();
+    const cutoff = Date.now() - SESSION_SNAPSHOT_RETENTION_MS;
+    const validSnapshots = incoming
+      .filter((snapshot) => (
+        snapshot
+        && typeof snapshot.id === "string"
+        && Number.isFinite(snapshot.createdAt)
+        && snapshot.createdAt >= cutoff
+        && Array.isArray(snapshot.windows)
+      ))
+      .sort((a, b) => b.createdAt - a.createdAt)
+      .slice(0, limit);
+    await chrome.storage.local.set({ [SESSION_SNAPSHOTS_KEY]: validSnapshots });
+    return validSnapshots.length;
+  });
+}
 
-  if (message.type === "set-tab-lifecycle-config") {
-    const config = normalizeLifecycleConfig(message.config || {});
-    chrome.storage.local.set({ [TAB_LIFECYCLE_CONFIG_KEY]: config }).then(() => sendResponse({ success: true, config }));
-    return true;
-  }
-
-  if (message.type === "set-scheduled-save-config") {
+const messageHandlers = {
+  "get-tab-lifecycle": async () => withLifecycleLock(() => getLifecycleStatus()),
+  "set-tab-lifecycle-config": async ({ config }) => {
+    const normalizedConfig = normalizeLifecycleConfig(config || {});
+    await chrome.storage.local.set({ [TAB_LIFECYCLE_CONFIG_KEY]: normalizedConfig });
+    return { success: true, config: normalizedConfig };
+  },
+  "set-scheduled-save-config": async () => {
     setupScheduledSaveAlarm();
-    sendResponse({ success: true });
-    return true;
-  }
-
-  if (message.type === "record-usage-event") {
-    withUsageStatsLock(() => recordUsageEvent(message)).then((success) => sendResponse({ success }));
-    return true;
-  }
-
-  if (message.type === "get-usage-stats") {
-    Promise.all([
+    return { success: true };
+  },
+  "record-usage-event": async (payload) => ({
+    success: await withUsageStatsLock(() => recordUsageEvent(payload))
+  }),
+  "get-usage-stats": async () => {
+    const [stats, local] = await Promise.all([
       withUsageStatsLock(() => getUsageStats()),
       chrome.storage.local.get([TAB_TIME_STATS_KEY, TAB_LIFECYCLE_STATE_KEY])
-    ]).then(([stats, local]) => sendResponse({
+    ]);
+    return {
       stats,
       timeStats: local[TAB_TIME_STATS_KEY] || { days: {} },
       lifecycle: local[TAB_LIFECYCLE_STATE_KEY] || { tabs: {}, activeByWindow: {} }
-    }));
-    return true;
-  }
-  if (message.type === "capture-session-now") {
-    captureSessionSnapshot("manual").then(sendResponse).catch((error) => {
-      console.error("捕获会话快照失败:", error);
-      sendResponse({ success: false, error: error.message || "捕获失败" });
-    });
-    return true;
-  }
-
-  if (message.type === "list-session-snapshots") {
-    Promise.all([
-      listSessionSnapshots(),
-      getSessionSnapshotLimit()
-    ]).then(([snapshots, limit]) => sendResponse({ snapshots, limit }));
-    return true;
-  }
-
-  if (message.type === "set-session-limit") {
-    const value = Number(message.limit);
-    if (Number.isInteger(value) && value >= 10 && value <= 500) {
-      chrome.storage.local.set({ mytabdesk_session_limit: value }, () => sendResponse({ success: true, limit: value }));
-    } else {
-      sendResponse({ success: false, error: "上限必须在 10 到 500 之间" });
+    };
+  },
+  "capture-session-now": async () => captureSessionSnapshot("manual"),
+  "list-session-snapshots": async () => {
+    const [snapshots, limit] = await Promise.all([listSessionSnapshots(), getSessionSnapshotLimit()]);
+    return { snapshots, limit };
+  },
+  "set-session-limit": async ({ limit }) => {
+    const value = Number(limit);
+    if (!Number.isInteger(value) || value < 10 || value > 500) {
+      const error = new Error("上限必须在 10 到 500 之间");
+      error.code = "SESSION_LIMIT_INVALID";
+      throw error;
     }
-    return true;
-  }
+    await chrome.storage.local.set({ mytabdesk_session_limit: value });
+    return { success: true, limit: value };
+  },
+  "delete-session-snapshot": async ({ snapshotId }) => ({
+    success: await deleteSessionSnapshot(snapshotId)
+  }),
+  "replace-session-snapshots": async ({ snapshots }) => ({
+    success: true,
+    count: await replaceSessionSnapshots(snapshots)
+  }),
+  "restore-session-snapshot": async (payload) => restoreSessionSnapshot(payload.snapshotId, {
+    restoreTo: payload.restoreTo,
+    targetWindowId: payload.targetWindowId,
+    skipOpenUrls: Boolean(payload.skipOpenUrls),
+    selectedTabKeys: payload.selectedTabKeys
+  }),
+  "close-saved-tabs": async ({ savedTabs }) => cleanupCurrentWindowTabs("close", savedTabs),
+  "discard-saved-tabs": async ({ savedTabs }) => cleanupCurrentWindowTabs("discard", savedTabs),
+  "claim-pending-save": async () => ({ data: await withPendingSaveLock(() => claimPendingSaveData()) }),
+  "get-pending-save": async () => ({ data: await withPendingSaveLock(() => claimPendingSaveData()) }),
+  "ack-pending-save": async ({ requestId }) => ({
+    success: await withPendingSaveLock(() => ackPendingSaveData(requestId))
+  }),
+  "release-pending-save": async ({ requestId }) => ({
+    success: await withPendingSaveLock(() => releasePendingSaveData(requestId))
+  }),
+  "claim-auto-sync": async () => withAutoSyncLeaseLock(() => claimAutoSyncLease()),
+  "release-auto-sync": async ({ leaseId }) => ({
+    success: await withAutoSyncLeaseLock(() => releaseAutoSyncLease(leaseId))
+  }),
+  "show-notification": async ({ title, message, notificationType }) => {
+    showNotification(title, message, notificationType);
+    return { success: true };
+  },
+  "consume-auto-sync-wake": async () => ({ pendingAt: await consumeAutoSyncWakeFlag() })
+};
 
-  if (message.type === "delete-session-snapshot") {
-    deleteSessionSnapshot(message.snapshotId).then((success) => sendResponse({ success }));
-    return true;
-  }
-
-  if (message.type === "replace-session-snapshots") {
-    withSessionHistoryLock(async () => {
-      const incoming = Array.isArray(message.snapshots) ? message.snapshots : [];
-      const limit = await getSessionSnapshotLimit();
-      const cutoff = Date.now() - SESSION_SNAPSHOT_RETENTION_MS;
-      const snapshots = incoming
-        .filter((snapshot) => (
-          snapshot
-          && typeof snapshot.id === "string"
-          && Number.isFinite(snapshot.createdAt)
-          && snapshot.createdAt >= cutoff
-          && Array.isArray(snapshot.windows)
-        ))
-        .sort((a, b) => b.createdAt - a.createdAt)
-        .slice(0, limit);
-      await chrome.storage.local.set({ [SESSION_SNAPSHOTS_KEY]: snapshots });
-      return snapshots.length;
-    }).then((count) => sendResponse({ success: true, count })).catch((error) => {
-      sendResponse({ success: false, error: error.message || "写入失败" });
-    });
-    return true;
-  }
-
-  if (message.type === "restore-session-snapshot") {
-    restoreSessionSnapshot(message.snapshotId, {
-      restoreTo: message.restoreTo,
-      targetWindowId: message.targetWindowId,
-      skipOpenUrls: Boolean(message.skipOpenUrls),
-      selectedTabKeys: message.selectedTabKeys
-    }).then(sendResponse).catch((error) => {
-      sendResponse({ success: false, error: error.message || "恢复失败" });
-    });
-    return true;
-  }
-
-  if (message.type === "close-saved-tabs" || message.type === "discard-saved-tabs") {
-    cleanupCurrentWindowTabs(
-      message.type === "close-saved-tabs" ? "close" : "discard",
-      message.savedTabs
-    )
-      .then(sendResponse)
-      .catch((error) => sendResponse({ success: false, error: error.message || "处理标签失败" }));
-    return true;
-  }
-
-  if (message.type === "claim-pending-save" || message.type === "get-pending-save") {
-    withPendingSaveLock(() => claimPendingSaveData()).then((data) => {
-      sendResponse({ data });
-    });
-    return true;
-  }
-
-  if (message.type === "ack-pending-save") {
-    withPendingSaveLock(() => ackPendingSaveData(message.requestId)).then((success) => {
-      sendResponse({ success });
-    }).catch((error) => {
-      console.error("确认待保存请求失败:", error);
-      sendResponse({ success: false });
-    });
-    return true;
-  }
-
-  if (message.type === "release-pending-save") {
-    withPendingSaveLock(() => releasePendingSaveData(message.requestId)).then((success) => {
-      sendResponse({ success });
-    });
-    return true;
-  }
-
-  if (message.type === "claim-auto-sync") {
-    withAutoSyncLeaseLock(() => claimAutoSyncLease()).then(sendResponse).catch((error) => {
-      console.error("申请自动同步租约失败:", error);
-      sendResponse({ claimed: false });
-    });
-    return true;
-  }
-
-  if (message.type === "release-auto-sync") {
-    withAutoSyncLeaseLock(() => releaseAutoSyncLease(message.leaseId)).then((success) => {
-      sendResponse({ success });
-    }).catch((error) => {
-      console.error("释放自动同步租约失败:", error);
-      sendResponse({ success: false });
-    });
-    return true;
-  }
-
-  if (message.type === "show-notification") {
-    showNotification(message.title, message.message, message.notificationType);
-    sendResponse({ success: true });
-    return true;
-  }
-
-  if (message.type === "consume-auto-sync-wake") {
-    consumeAutoSyncWakeFlag().then((pendingAt) => {
-      sendResponse({ pendingAt });
-    });
-    return true;
-  }
-});
+const messageRouter = globalThis.MyTabDeskBackgroundMessageRouter.createMessageRouter({ handlers: messageHandlers });
+chrome.runtime.onMessage.addListener(messageRouter.listener);
 
 chrome.tabs.onCreated.addListener((tab) => withLifecycleLock(async () => {
   const entry = createLifecycleEntry(tab);

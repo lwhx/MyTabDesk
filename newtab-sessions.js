@@ -610,9 +610,7 @@
   }
 
   function openSessionView() {
-    root.MyTabDeskPage.state.viewMode = "sessions";
-    root.MyTabDeskPage.state.createSpaceMenuOpen = false;
-    root.MyTabDeskRender.renderAll();
+    root.MyTabDeskPage.stateController.navigate("sessions", { source: "sessions" });
     loadSessionHistory().catch((error) => {
       root.MyTabDeskNotifications.showToast(error.message || "读取会话历史失败", "error");
     });

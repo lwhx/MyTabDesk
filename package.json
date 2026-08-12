@@ -4,9 +4,10 @@
   "description": "本地优先的浏览器标签页工作台扩展",
   "private": true,
   "scripts": {
-    "test": "node tests/tabdesk-core.test.js && node tests/browser-messaging.test.js && node tests/sync-network.test.js && node tests/sync-transport.test.js && node tests/ui-copy.test.js",
+    "test": "node tests/tabdesk-core.test.js && node tests/workspace-repository.test.js && node tests/message-protocol.test.js && node tests/background-structure.test.js && node tests/page-store.test.js && node tests/page-event-bus.test.js && node tests/page-state-integration.test.js && node tests/stage4-page-integration.test.js && node tests/performance-benchmark.test.js && node tests/browser-messaging.test.js && node tests/sync-network.test.js && node tests/sync-transport.test.js && node tests/ui-copy.test.js && node tests/e2e-helpers.test.js && node tests/ai-grouping.test.js && node tests/favicon-cache.test.js",
+    "benchmark": "node scripts/performance-benchmark.js",
     "test:e2e": "npm run build:dist && node tests/browser-extension.e2e.js",
-    "verify": "npm test && npm run lint && npm run test:e2e && npm run check:dist",
+    "verify": "npm test && npm run benchmark && npm run lint && npm run test:e2e && npm run check:dist",
     "lint": "eslint .",
     "build:dist": "node scripts/build-dist.js",
     "check:dist": "node scripts/build-dist.js --check"
